@@ -2,7 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Commands
+## Project structure
+
+```
+EventView/
+├── EventScraper/        # Python scraping pipeline + FastAPI backend
+└── EventView.UI/        # Vue 3 frontend (to be built)
+```
+
+## EventScraper — commands
+
+Run these from inside `EventScraper/`:
 
 ```bash
 # Setup
@@ -16,6 +26,7 @@ python main.py --init-db       # Initialize/reset the SQLite database
 # Scraping
 python main.py --scraper barneveld   # Run a single scraper by name
 python main.py --all                 # Run all registered scrapers
+python main.py --schedule            # Run all scrapers every 24 h (blocking)
 
 # API server (http://localhost:8000)
 python api.py
@@ -28,28 +39,26 @@ python test_setup.py           # System verification / smoke test
 
 ## Architecture
 
-The project is a Python scraping pipeline that feeds a FastAPI + Vue.js frontend. The flow is:
-
 ```
 Website HTML → base_scraper.fetch_page() → BeautifulSoup → scraper.parse_events()
   → base_scraper.save_events() → SQLite (events.db)
-  → api.py (FastAPI) → EventViewer/ (Vue 3 SPA)
+  → api.py (FastAPI) → EventView.UI/ (Vue 3 SPA)
 ```
 
-**Scraper framework** (`base_scraper.py`): Abstract base class. Subclasses only implement `parse_events()` — fetching, saving, deduplication, and logging are handled by the base class. Deduplication is by `(source_url, event_date)`.
+**Scraper framework** (`EventScraper/base_scraper.py`): Abstract base class. Subclasses only implement `parse_events()` — fetching, saving, deduplication, and logging are handled by the base class. Deduplication is by `(source_url, event_date)`.
 
-**Scraper registry** (`main.py`): The `SCRAPERS` dict maps CLI names to scraper classes. Register new scrapers here.
+**Scraper registry** (`EventScraper/main.py`): The `SCRAPERS` dict maps CLI names to scraper classes. Register new scrapers here.
 
-**Models** (`models.py`): Two SQLAlchemy tables — `Event` (13 fields including `is_active`) and `ScrapingLog` (tracks every scraping attempt with status and error messages).
+**Models** (`EventScraper/models.py`): Two SQLAlchemy tables — `Event` (13 fields including `is_active`) and `ScrapingLog` (tracks every scraping attempt with status and error messages).
 
-**API** (`api.py`): FastAPI app with CORS enabled. Also serves the `EventViewer/` static files, so the Vue frontend is available at the same origin as the API.
+**API** (`EventScraper/api.py`): FastAPI app with CORS enabled. Serves the Vue frontend static build from `EventView.UI/dist/` when present.
 
-**Config** (`config.py`): Central place for `DATABASE_URL`, `REQUEST_TIMEOUT`, `REQUEST_DELAY` (1 s between requests), and `MAX_WORKERS` (2, tuned for Raspberry Pi 4B — the target deployment platform).
+**Config** (`EventScraper/config.py`): Central place for `DATABASE_URL`, `REQUEST_TIMEOUT`, `REQUEST_DELAY` (1 s between requests), and `MAX_WORKERS` (2, tuned for Raspberry Pi 4B — the target deployment platform).
 
 ## Adding a New Scraper
 
-1. Copy `scraper_template.py` into `scrapers/` and implement `parse_events()`.
-2. Add an entry to the `SCRAPERS` dict in `main.py`.
+1. Copy `EventScraper/scraper_template.py` into `EventScraper/scrapers/` and implement `parse_events()`.
+2. Add an entry to the `SCRAPERS` dict in `EventScraper/main.py`.
 3. Run `python main.py --scraper <name>` to test it.
 
-The working reference implementation is [`scrapers/barneveld_centrum.py`](scrapers/barneveld_centrum.py).
+The working reference implementation is [`EventScraper/scrapers/barneveld_centrum.py`](EventScraper/scrapers/barneveld_centrum.py).
