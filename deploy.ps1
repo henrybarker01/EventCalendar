@@ -10,9 +10,9 @@ param(
     [switch]$BackendOnly
 )
 
-$PI_USER = "pi"
+$PI_USER = "administrator"
 $PI_HOST = "192.168.178.240"
-$PI_DIR  = "/home/pi/EventView"
+$PI_DIR  = "/home/administrator/EventView"
 $SSH     = "$PI_USER@$PI_HOST"
 
 function Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
@@ -23,7 +23,7 @@ function Fail($msg) { Write-Host "    ERROR: $msg" -ForegroundColor Red; exit 1 
 
 if (-not $BackendOnly) {
     if ($SkipBuild) {
-        Step "Skipping build (--SkipBuild)"
+        Step "Skipping build (-SkipBuild)"
     } else {
         Step "Building Vue frontend..."
         Push-Location "$PSScriptRoot\EventView.UI"
@@ -34,52 +34,66 @@ if (-not $BackendOnly) {
     }
 }
 
-# ── 2. Deploy backend ─────────────────────────────────────────────────
+# ── 2. Copy files in one scp batch ───────────────────────────────────
+# Write a temp script that runs on the Pi after the files land.
 
-Step "Deploying backend (EventScraper/)..."
-scp "$PSScriptRoot\EventScraper\api.py"          "${SSH}:${PI_DIR}/EventScraper/api.py"
-scp "$PSScriptRoot\EventScraper\base_scraper.py" "${SSH}:${PI_DIR}/EventScraper/base_scraper.py"
-scp "$PSScriptRoot\EventScraper\models.py"       "${SSH}:${PI_DIR}/EventScraper/models.py"
-scp "$PSScriptRoot\EventScraper\config.py"       "${SSH}:${PI_DIR}/EventScraper/config.py"
-scp "$PSScriptRoot\EventScraper\main.py"         "${SSH}:${PI_DIR}/EventScraper/main.py"
-scp "$PSScriptRoot\EventScraper\requirements.txt" "${SSH}:${PI_DIR}/EventScraper/requirements.txt"
-scp -r "$PSScriptRoot\EventScraper\scrapers"     "${SSH}:${PI_DIR}/EventScraper/"
-if ($LASTEXITCODE -ne 0) { Fail "Backend scp failed" }
-Ok "Backend files copied."
+$remoteScript = @"
+set -e
+cd $PI_DIR/EventScraper
+source venv/bin/activate
+pip install -q -r requirements.txt
+sudo systemctl restart eventview
+sleep 2
+systemctl is-active eventview
+"@
 
-# ── 3. Deploy frontend ────────────────────────────────────────────────
+# Dump remote script to a temp file so we can send it in one ssh call
+$tmpScript = [System.IO.Path]::GetTempFileName() + ".sh"
+$remoteScript | Set-Content -Encoding utf8 $tmpScript
 
+Step "Copying files to Pi (one connection)..."
+
+# Build the list of things to copy into a temp staging folder,
+# then send everything in a single scp -r call.
+$stage = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "eventview_deploy")
+if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+New-Item -ItemType Directory $stage | Out-Null
+New-Item -ItemType Directory "$stage\EventScraper" | Out-Null
+
+# Backend files
+Copy-Item "$PSScriptRoot\EventScraper\api.py"           "$stage\EventScraper\"
+Copy-Item "$PSScriptRoot\EventScraper\base_scraper.py"  "$stage\EventScraper\"
+Copy-Item "$PSScriptRoot\EventScraper\models.py"        "$stage\EventScraper\"
+Copy-Item "$PSScriptRoot\EventScraper\config.py"        "$stage\EventScraper\"
+Copy-Item "$PSScriptRoot\EventScraper\main.py"          "$stage\EventScraper\"
+Copy-Item "$PSScriptRoot\EventScraper\requirements.txt" "$stage\EventScraper\"
+Copy-Item "$PSScriptRoot\EventScraper\scrapers" "$stage\EventScraper\scrapers" -Recurse
+
+# Frontend
 if (-not $BackendOnly) {
-    Step "Deploying frontend (EventView.UI/dist/)..."
-    # Clear old dist first so removed files don't linger
-    ssh $SSH "rm -rf ${PI_DIR}/EventView.UI/dist"
-    scp -r "$PSScriptRoot\EventView.UI\dist" "${SSH}:${PI_DIR}/EventView.UI/dist"
-    if ($LASTEXITCODE -ne 0) { Fail "Frontend scp failed" }
-    Ok "Frontend files copied."
+    Copy-Item "$PSScriptRoot\EventView.UI\dist" "$stage\EventView.UI" -Recurse
 }
 
-# ── 4. Install any new Python deps ───────────────────────────────────
+# Send everything in one shot
+scp -r "$stage\*" "${SSH}:${PI_DIR}/"
+if ($LASTEXITCODE -ne 0) { Fail "scp failed" }
+Ok "Files copied."
 
-Step "Installing Python dependencies on Pi..."
-ssh $SSH "cd ${PI_DIR}/EventScraper && source venv/bin/activate && pip install -q -r requirements.txt"
-if ($LASTEXITCODE -ne 0) { Fail "pip install failed" }
-Ok "Dependencies up to date."
+# ── 3. Install deps + restart (one ssh call) ──────────────────────────
 
-# ── 5. Restart the service ────────────────────────────────────────────
+Step "Installing deps and restarting service..."
+$status = ssh $SSH "bash -s" "<" $tmpScript
+if ($LASTEXITCODE -ne 0) { Fail "Remote script failed" }
 
-Step "Restarting eventview service..."
-ssh $SSH "sudo systemctl restart eventview"
-if ($LASTEXITCODE -ne 0) { Fail "systemctl restart failed" }
-
-# Give it a moment then check status
-Start-Sleep -Seconds 2
-$status = ssh $SSH "systemctl is-active eventview"
 if ($status -eq "active") {
     Ok "Service is running."
 } else {
-    Fail "Service failed to start. Run: ssh $SSH 'journalctl -u eventview -n 30'"
+    Fail "Service did not come back up. Run: ssh $SSH 'journalctl -u eventview -n 30'"
 }
 
-# ── Done ──────────────────────────────────────────────────────────────
+# ── Cleanup ───────────────────────────────────────────────────────────
 
-Write-Host "`n✓ Deployed to http://${PI_HOST}:8000" -ForegroundColor Green
+Remove-Item $stage -Recurse -Force
+Remove-Item $tmpScript -Force
+
+Write-Host "`nDeployed to http://${PI_HOST}:8000" -ForegroundColor Green
