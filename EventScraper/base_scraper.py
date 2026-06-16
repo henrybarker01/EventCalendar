@@ -64,10 +64,11 @@ class BaseScraper(ABC):
 
     @abstractmethod
     def parse_events(self) -> list[dict]:
-        """Return a list of event dicts with at minimum:
-            title (str), event_date (date), source_url (str)
-        Optional keys: end_date, location, description, image_url,
-                       category, price
+        """Return a list of dicts with at minimum:
+            title (str), source_url (str)
+        For events: event_date (date) is required.
+        For attractions: omit event_date and set event_type="attraction".
+        Optional keys: end_date, location, description, image_url, category, price
         """
 
     # ------------------------------------------------------------------
@@ -88,11 +89,13 @@ class BaseScraper(ABC):
     def _save_events(self, db, events: list[dict]) -> int:
         new_count = 0
         for raw in events:
+            event_type = raw.get("event_type", "event")
             exists = (
                 db.query(Event)
                 .filter_by(
                     source_url=raw["source_url"],
-                    event_date=raw["event_date"],
+                    event_date=raw.get("event_date"),
+                    event_type=event_type,
                 )
                 .first()
             )
@@ -101,8 +104,9 @@ class BaseScraper(ABC):
 
             event = Event(
                 source_name=self.source_name,
+                event_type=event_type,
                 title=raw["title"],
-                event_date=raw["event_date"],
+                event_date=raw.get("event_date"),
                 end_date=raw.get("end_date"),
                 location=raw.get("location"),
                 description=raw.get("description"),

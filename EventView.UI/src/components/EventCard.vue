@@ -23,7 +23,7 @@ function proxyUrl(url: string) {
         <span v-for="cat in event.category.split(',')" :key="cat" class="badge">{{ cat.trim() }}</span>
       </div>
       <p class="event-card-title">{{ event.title }}</p>
-      <p class="event-card-date">{{ formatDate(event.event_date) }}</p>
+      <p v-if="event.event_date" class="event-card-date">{{ formatDate(event.event_date) }}</p>
       <p v-if="event.location" class="event-card-location">📍 {{ event.location }}</p>
       <p v-if="event.description" class="event-card-desc">{{ event.description }}</p>
     </div>

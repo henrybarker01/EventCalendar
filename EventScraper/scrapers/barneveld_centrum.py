@@ -99,15 +99,6 @@ class BarneveldCentrumScraper(BaseScraper):
         if not title:
             return None
 
-        # No date element → permanent attraction, not a time-bound event
-        date_el = card.select_one("p.card-date")
-        if not date_el:
-            return None
-
-        event_date, end_date = _parse_date_range(date_el.get_text(strip=True))
-        if not event_date:
-            return None  # unparseable date, skip
-
         link_el = card.select_one("a.clickable[href]")
         href = link_el["href"] if link_el else self.base_url
 
@@ -120,7 +111,23 @@ class BarneveldCentrumScraper(BaseScraper):
         badges = card.select(".card-tags .badge")
         category = ", ".join(b.get_text(strip=True) for b in badges) if badges else None
 
+        date_el = card.select_one("p.card-date")
+        if not date_el:
+            return {
+                "event_type": "attraction",
+                "title": title,
+                "source_url": href,
+                "image_url": image_url,
+                "description": description,
+                "category": category,
+            }
+
+        event_date, end_date = _parse_date_range(date_el.get_text(strip=True))
+        if not event_date:
+            return None  # unparseable date, skip
+
         return {
+            "event_type": "event",
             "title": title,
             "event_date": event_date,
             "end_date": end_date,

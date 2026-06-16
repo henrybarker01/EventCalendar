@@ -15,12 +15,15 @@ class Base(DeclarativeBase):
 class Event(Base):
     __tablename__ = "events"
     __table_args__ = (
-        UniqueConstraint("source_url", "event_date", name="uq_event"),
+        # Attractions have no date, so deduplicate by source_url + event_type
+        UniqueConstraint("source_url", "event_date", "event_type", name="uq_event"),
     )
 
     id = Column(Integer, primary_key=True)
+    # "event" = time-bound event, "attraction" = permanent thing to do
+    event_type = Column(String(32), nullable=False, default="event")
     title = Column(String(512), nullable=False)
-    event_date = Column(Date, nullable=False)
+    event_date = Column(Date, nullable=True)   # null for attractions
     end_date = Column(Date, nullable=True)
     location = Column(String(512), nullable=True)
     description = Column(Text, nullable=True)

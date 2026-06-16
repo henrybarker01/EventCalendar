@@ -4,6 +4,7 @@ import { api, type Event } from '../api/client'
 
 export const useEventsStore = defineStore('events', () => {
   const events = ref<Event[]>([])
+  const attractions = ref<Event[]>([])
   const sources = ref<string[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -15,22 +16,28 @@ export const useEventsStore = defineStore('events', () => {
 
   const filtered = computed(() => {
     const q = search.value.toLowerCase()
-    return events.value.filter(e => {
-      if (q && !e.title.toLowerCase().includes(q) && !(e.description ?? '').toLowerCase().includes(q)) return false
-      return true
-    })
+    return events.value.filter(e =>
+      !q || e.title.toLowerCase().includes(q) || (e.description ?? '').toLowerCase().includes(q)
+    )
+  })
+
+  const filteredAttractions = computed(() => {
+    const q = search.value.toLowerCase()
+    return attractions.value.filter(e =>
+      !q || e.title.toLowerCase().includes(q) || (e.description ?? '').toLowerCase().includes(q)
+    )
   })
 
   async function fetchEvents() {
     loading.value = true
     error.value = null
     try {
-      events.value = await api.getEvents({
-        source: selectedSource.value || undefined,
-        from_date: fromDate.value || undefined,
-        to_date: toDate.value || undefined,
-        limit: 500,
-      })
+      const [evts, attrs] = await Promise.all([
+        api.getEvents({ source: selectedSource.value || undefined, event_type: 'event', from_date: fromDate.value || undefined, to_date: toDate.value || undefined, limit: 500 }),
+        api.getEvents({ source: selectedSource.value || undefined, event_type: 'attraction', limit: 500 }),
+      ])
+      events.value = evts
+      attractions.value = attrs
     } catch (e: any) {
       error.value = e.message ?? 'Failed to load events'
     } finally {
@@ -42,5 +49,5 @@ export const useEventsStore = defineStore('events', () => {
     sources.value = await api.getSources()
   }
 
-  return { events, sources, loading, error, filtered, selectedSource, fromDate, toDate, search, fetchEvents, fetchSources }
+  return { events, attractions, sources, loading, error, filtered, filteredAttractions, selectedSource, fromDate, toDate, search, fetchEvents, fetchSources }
 })

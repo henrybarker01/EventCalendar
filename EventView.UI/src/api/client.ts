@@ -4,8 +4,9 @@ const http = axios.create({ baseURL: '/api' })
 
 export interface Event {
   id: number
+  event_type: 'event' | 'attraction'
   title: string
-  event_date: string
+  event_date: string | null
   end_date: string | null
   location: string | null
   description: string | null
@@ -29,6 +30,7 @@ export interface ScrapingLog {
 export const api = {
   getEvents(params?: {
     source?: string
+    event_type?: string
     from_date?: string
     to_date?: string
     active_only?: boolean

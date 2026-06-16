@@ -33,8 +33,9 @@ app.add_middleware(
 
 class EventOut(BaseModel):
     id: int
+    event_type: str
     title: str
-    event_date: date
+    event_date: date | None
     end_date: date | None
     location: str | None
     description: str | None
@@ -66,6 +67,7 @@ class ScrapingLogOut(BaseModel):
 @app.get("/api/events", response_model=list[EventOut])
 def list_events(
     source: str | None = Query(None),
+    event_type: str | None = Query(None),
     from_date: date | None = Query(None),
     to_date: date | None = Query(None),
     active_only: bool = Query(True),
@@ -79,6 +81,8 @@ def list_events(
             q = q.filter(Event.is_active == True)
         if source:
             q = q.filter(Event.source_name == source)
+        if event_type:
+            q = q.filter(Event.event_type == event_type)
         if from_date:
             q = q.filter(Event.event_date >= from_date)
         if to_date:
