@@ -8,11 +8,15 @@ const router = useRouter()
 function formatDate(d: string) {
   return new Date(d).toLocaleDateString('nl-NL', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })
 }
+
+function proxyUrl(url: string) {
+  return `/api/image-proxy?url=${encodeURIComponent(url)}`
+}
 </script>
 
 <template>
   <article class="event-card" @click="router.push(`/events/${event.id}`)">
-    <img v-if="event.image_url" :src="event.image_url" :alt="event.title" class="event-card-img" loading="lazy" />
+    <img v-if="event.image_url" :src="proxyUrl(event.image_url)" :alt="event.title" class="event-card-img" loading="lazy" />
     <div v-else class="event-card-img-placeholder">🗓️</div>
     <div class="event-card-body">
       <div v-if="event.category" class="badge-row">

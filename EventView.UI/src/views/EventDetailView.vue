@@ -22,6 +22,10 @@ onMounted(async () => {
 function formatDate(d: string) {
   return new Date(d).toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
 }
+
+function proxyUrl(url: string) {
+  return `/api/image-proxy?url=${encodeURIComponent(url)}`
+}
 </script>
 
 <template>
@@ -31,7 +35,7 @@ function formatDate(d: string) {
     <p v-if="loading" class="status-msg">Laden...</p>
     <p v-else-if="error" class="status-msg">⚠️ {{ error }}</p>
     <template v-else-if="event">
-      <img v-if="event.image_url" :src="event.image_url" :alt="event.title" class="event-detail-img" />
+      <img v-if="event.image_url" :src="proxyUrl(event.image_url)" :alt="event.title" class="event-detail-img" />
 
       <div v-if="event.category" class="badge-row" style="margin-bottom:.75rem">
         <span v-for="cat in event.category.split(',')" :key="cat" class="badge">{{ cat.trim() }}</span>

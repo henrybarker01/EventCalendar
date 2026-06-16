@@ -9,10 +9,11 @@ FastAPI server — serves the REST API and (optionally) the Vue frontend.
 import os
 from datetime import date
 
+import httpx
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import desc
 
@@ -123,6 +124,23 @@ def list_logs(limit: int = Query(50, le=200)):
         db.close()
 
 
+@app.get("/api/image-proxy")
+async def image_proxy(url: str = Query(...)):
+    """Fetch a remote image server-side to avoid hotlink blocking."""
+    allowed_hosts = ["visitregiobarneveld.nl"]
+    from urllib.parse import urlparse
+    host = urlparse(url).hostname or ""
+    if not any(host.endswith(h) for h in allowed_hosts):
+        raise HTTPException(status_code=400, detail="Host not allowed")
+
+    async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
+        resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail="Image fetch failed")
+        content_type = resp.headers.get("content-type", "image/jpeg")
+        return StreamingResponse(iter([resp.content]), media_type=content_type)
+
+
 @app.post("/api/scrape/{source_name}")
 def trigger_scrape(source_name: str):
     """Manually trigger a scraper run via the API."""
@@ -137,7 +155,7 @@ def trigger_scrape(source_name: str):
 
 # ── Serve Vue frontend (if built) ─────────────────────────────────────
 
-FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "EventViewer", "dist")
+FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "EventView.UI", "dist")
 
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIR, "assets")), name="assets")
