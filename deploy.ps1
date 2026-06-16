@@ -37,19 +37,6 @@ if (-not $BackendOnly) {
 # ── 2. Copy files in one scp batch ───────────────────────────────────
 # Write a temp script that runs on the Pi after the files land.
 
-$remoteScript = @"
-set -e
-cd $PI_DIR/EventScraper
-source venv/bin/activate
-pip install -q -r requirements.txt
-sudo systemctl restart eventview
-sleep 2
-systemctl is-active eventview
-"@
-
-# Dump remote script to a temp file so we can send it in one ssh call
-$tmpScript = [System.IO.Path]::GetTempFileName() + ".sh"
-$remoteScript | Set-Content -Encoding utf8 $tmpScript
 
 Step "Copying files to Pi (one connection)..."
 
@@ -82,18 +69,11 @@ Ok "Files copied."
 # ── 3. Install deps + restart (one ssh call) ──────────────────────────
 
 Step "Installing deps and restarting service..."
-$status = ssh $SSH "bash -s" "<" $tmpScript
-if ($LASTEXITCODE -ne 0) { Fail "Remote script failed" }
-
-if ($status -eq "active") {
-    Ok "Service is running."
-} else {
-    Fail "Service did not come back up. Run: ssh $SSH 'journalctl -u eventview -n 30'"
-}
+ssh $SSH "cd $PI_DIR/EventScraper && source venv/bin/activate && pip install -q -r requirements.txt && sudo systemctl restart eventview && sleep 2 && systemctl is-active eventview"
+if ($LASTEXITCODE -ne 0) { Fail "Remote script failed. Run: ssh $SSH 'journalctl -u eventview -n 30'" }
 
 # ── Cleanup ───────────────────────────────────────────────────────────
 
 Remove-Item $stage -Recurse -Force
-Remove-Item $tmpScript -Force
 
 Write-Host "`nDeployed to http://${PI_HOST}:8000" -ForegroundColor Green
