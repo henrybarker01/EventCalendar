@@ -34,46 +34,37 @@ if (-not $BackendOnly) {
     }
 }
 
-# ── 2. Copy files in one scp batch ───────────────────────────────────
-# Write a temp script that runs on the Pi after the files land.
+# ── 2. Deploy backend ─────────────────────────────────────────────────
 
+Step "Copying backend files..."
+scp "$PSScriptRoot\EventScraper\api.py"            "${SSH}:${PI_DIR}/EventScraper/api.py"
+scp "$PSScriptRoot\EventScraper\base_scraper.py"   "${SSH}:${PI_DIR}/EventScraper/base_scraper.py"
+scp "$PSScriptRoot\EventScraper\models.py"         "${SSH}:${PI_DIR}/EventScraper/models.py"
+scp "$PSScriptRoot\EventScraper\config.py"         "${SSH}:${PI_DIR}/EventScraper/config.py"
+scp "$PSScriptRoot\EventScraper\main.py"           "${SSH}:${PI_DIR}/EventScraper/main.py"
+scp "$PSScriptRoot\EventScraper\requirements.txt"  "${SSH}:${PI_DIR}/EventScraper/requirements.txt"
+ssh $SSH "mkdir -p ${PI_DIR}/EventScraper/scrapers"
+foreach ($f in (Get-ChildItem "$PSScriptRoot\EventScraper\scrapers" -Filter "*.py")) {
+    scp $f.FullName "${SSH}:${PI_DIR}/EventScraper/scrapers/$($f.Name)"
+}
+if ($LASTEXITCODE -ne 0) { Fail "Backend scp failed" }
+Ok "Backend copied."
 
-Step "Copying files to Pi (one connection)..."
+# ── 3. Deploy frontend ────────────────────────────────────────────────
 
-# Build the list of things to copy into a temp staging folder,
-# then send everything in a single scp -r call.
-$stage = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "eventview_deploy")
-if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
-New-Item -ItemType Directory $stage | Out-Null
-New-Item -ItemType Directory "$stage\EventScraper" | Out-Null
-
-# Backend files
-Copy-Item "$PSScriptRoot\EventScraper\api.py"           "$stage\EventScraper\"
-Copy-Item "$PSScriptRoot\EventScraper\base_scraper.py"  "$stage\EventScraper\"
-Copy-Item "$PSScriptRoot\EventScraper\models.py"        "$stage\EventScraper\"
-Copy-Item "$PSScriptRoot\EventScraper\config.py"        "$stage\EventScraper\"
-Copy-Item "$PSScriptRoot\EventScraper\main.py"          "$stage\EventScraper\"
-Copy-Item "$PSScriptRoot\EventScraper\requirements.txt" "$stage\EventScraper\"
-Copy-Item "$PSScriptRoot\EventScraper\scrapers" "$stage\EventScraper\scrapers" -Recurse
-
-# Frontend
 if (-not $BackendOnly) {
-    Copy-Item "$PSScriptRoot\EventView.UI\dist" "$stage\EventView.UI" -Recurse
+    Step "Copying frontend..."
+    # Wipe old dist first, then copy fresh
+    ssh $SSH "rm -rf ${PI_DIR}/EventView.UI/dist && mkdir -p ${PI_DIR}/EventView.UI/dist"
+    scp -r "$PSScriptRoot\EventView.UI\dist\." "${SSH}:${PI_DIR}/EventView.UI/dist/"
+    if ($LASTEXITCODE -ne 0) { Fail "Frontend scp failed" }
+    Ok "Frontend copied."
 }
 
-# Send everything in one shot
-scp -r "$stage\*" "${SSH}:${PI_DIR}/"
-if ($LASTEXITCODE -ne 0) { Fail "scp failed" }
-Ok "Files copied."
-
-# ── 3. Install deps + restart (one ssh call) ──────────────────────────
+# ── 4. Install deps + restart ─────────────────────────────────────────
 
 Step "Installing deps and restarting service..."
-ssh $SSH "cd $PI_DIR/EventScraper && source venv/bin/activate && pip install -q -r requirements.txt && sudo systemctl restart eventview && sleep 2 && systemctl is-active eventview"
-if ($LASTEXITCODE -ne 0) { Fail "Remote script failed. Run: ssh $SSH 'journalctl -u eventview -n 30'" }
-
-# ── Cleanup ───────────────────────────────────────────────────────────
-
-Remove-Item $stage -Recurse -Force
+ssh $SSH "cd ${PI_DIR}/EventScraper && source venv/bin/activate && pip install -q -r requirements.txt && sudo systemctl restart eventview && sleep 2 && systemctl is-active eventview"
+if ($LASTEXITCODE -ne 0) { Fail "Remote script failed. Run: ssh ${SSH} 'journalctl -u eventview -n 30'" }
 
 Write-Host "`nDeployed to http://${PI_HOST}:8000" -ForegroundColor Green

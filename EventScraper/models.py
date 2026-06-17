@@ -1,9 +1,9 @@
 from datetime import datetime
 from sqlalchemy import (
     create_engine, Column, Integer, String, Date,
-    DateTime, Boolean, Text, UniqueConstraint
+    DateTime, Boolean, Text, UniqueConstraint, ForeignKey
 )
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, sessionmaker, relationship
 
 from config import DATABASE_URL
 
@@ -15,15 +15,13 @@ class Base(DeclarativeBase):
 class Event(Base):
     __tablename__ = "events"
     __table_args__ = (
-        # Attractions have no date, so deduplicate by source_url + event_type
         UniqueConstraint("source_url", "event_date", "event_type", name="uq_event"),
     )
 
     id = Column(Integer, primary_key=True)
-    # "event" = time-bound event, "attraction" = permanent thing to do
     event_type = Column(String(32), nullable=False, default="event")
     title = Column(String(512), nullable=False)
-    event_date = Column(Date, nullable=True)   # null for attractions
+    event_date = Column(Date, nullable=True)
     end_date = Column(Date, nullable=True)
     location = Column(String(512), nullable=True)
     description = Column(Text, nullable=True)
@@ -36,8 +34,50 @@ class Event(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    bookmarks = relationship("Bookmark", back_populates="event", cascade="all, delete-orphan")
+    hidden_events = relationship("HiddenEvent", back_populates="event", cascade="all, delete-orphan")
+
     def __repr__(self):
         return f"<Event {self.title!r} on {self.event_date}>"
+
+
+class Bookmark(Base):
+    __tablename__ = "bookmarks"
+
+    id = Column(Integer, primary_key=True)
+    event_id = Column(Integer, ForeignKey("events.id"), nullable=False, unique=True)
+    chosen_date = Column(Date, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    event = relationship("Event", back_populates="bookmarks")
+
+    def __repr__(self):
+        return f"<Bookmark event_id={self.event_id}>"
+
+
+class HiddenEvent(Base):
+    __tablename__ = "hidden_events"
+
+    id = Column(Integer, primary_key=True)
+    event_id = Column(Integer, ForeignKey("events.id"), nullable=False, unique=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    event = relationship("Event", back_populates="hidden_events")
+
+    def __repr__(self):
+        return f"<HiddenEvent event_id={self.event_id}>"
+
+
+class CustomEvent(Base):
+    __tablename__ = "custom_events"
+
+    id = Column(Integer, primary_key=True)
+    title = Column(String(512), nullable=False)
+    event_date = Column(Date, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<CustomEvent {self.title!r} on {self.event_date}>"
 
 
 class ScrapingLog(Base):
@@ -47,7 +87,7 @@ class ScrapingLog(Base):
     source_name = Column(String(256), nullable=False)
     started_at = Column(DateTime, default=datetime.utcnow)
     finished_at = Column(DateTime, nullable=True)
-    status = Column(String(32), nullable=False)  # success | error | partial
+    status = Column(String(32), nullable=False)
     events_found = Column(Integer, default=0)
     events_new = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)

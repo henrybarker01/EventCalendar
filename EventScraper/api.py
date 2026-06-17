@@ -7,7 +7,7 @@ FastAPI server — serves the REST API and (optionally) the Vue frontend.
 """
 
 import os
-from datetime import date
+from datetime import date, datetime
 
 import httpx
 from fastapi import FastAPI, Query, HTTPException
@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import desc
 
-from models import Event, ScrapingLog, SessionLocal, init_db
+from models import Event, Bookmark, CustomEvent, HiddenEvent, ScrapingLog, SessionLocal, init_db
 
 app = FastAPI(title="EventView API", version="1.0.0")
 
@@ -45,9 +45,37 @@ class EventOut(BaseModel):
     category: str | None
     price: str | None
     is_active: bool
+    is_bookmarked: bool = False
+    bookmark_date: date | None = None
+    is_hidden: bool = False
 
     class Config:
         from_attributes = True
+
+
+class BookmarkOut(BaseModel):
+    id: int
+    event_id: int
+    chosen_date: date | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CustomEventOut(BaseModel):
+    id: int
+    title: str
+    event_date: date
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CustomEventIn(BaseModel):
+    title: str
+    event_date: date
 
 
 class ScrapingLogOut(BaseModel):
@@ -87,7 +115,19 @@ def list_events(
             q = q.filter(Event.event_date >= from_date)
         if to_date:
             q = q.filter(Event.event_date <= to_date)
-        return q.order_by(Event.event_date).offset(offset).limit(limit).all()
+        events = q.order_by(Event.event_date).offset(offset).limit(limit).all()
+        bookmarks_map = {b.event_id: b for b in db.query(Bookmark).all()}
+        hidden_set = {h.event_id for h in db.query(HiddenEvent).all()}
+        result = []
+        for e in events:
+            d = EventOut.model_validate(e)
+            if e.id in bookmarks_map:
+                d.is_bookmarked = True
+                d.bookmark_date = bookmarks_map[e.id].chosen_date
+            if e.id in hidden_set:
+                d.is_hidden = True
+            result.append(d)
+        return result
     finally:
         db.close()
 
@@ -99,7 +139,14 @@ def get_event(event_id: int):
         event = db.query(Event).filter(Event.id == event_id).first()
         if not event:
             raise HTTPException(status_code=404, detail="Event not found")
-        return event
+        out = EventOut.model_validate(event)
+        bookmark = db.query(Bookmark).filter_by(event_id=event_id).first()
+        if bookmark:
+            out.is_bookmarked = True
+            out.bookmark_date = bookmark.chosen_date
+        if db.query(HiddenEvent).filter_by(event_id=event_id).first():
+            out.is_hidden = True
+        return out
     finally:
         db.close()
 
@@ -110,6 +157,122 @@ def list_sources():
     try:
         rows = db.query(Event.source_name).distinct().all()
         return [r[0] for r in rows]
+    finally:
+        db.close()
+
+
+@app.get("/api/bookmarks", response_model=list[EventOut])
+def list_bookmarks():
+    db = SessionLocal()
+    try:
+        bookmarks = db.query(Bookmark).order_by(Bookmark.created_at).all()
+        result = []
+        for b in bookmarks:
+            out = EventOut.model_validate(b.event)
+            out.is_bookmarked = True
+            out.bookmark_date = b.chosen_date
+            result.append(out)
+        return result
+    finally:
+        db.close()
+
+
+@app.post("/api/bookmarks/{event_id}", response_model=BookmarkOut)
+def add_bookmark(event_id: int, chosen_date: date | None = Query(None)):
+    db = SessionLocal()
+    try:
+        event = db.query(Event).filter(Event.id == event_id).first()
+        if not event:
+            raise HTTPException(status_code=404, detail="Event not found")
+        existing = db.query(Bookmark).filter_by(event_id=event_id).first()
+        if existing:
+            if chosen_date is not None and existing.chosen_date != chosen_date:
+                existing.chosen_date = chosen_date
+                db.commit()
+                db.refresh(existing)
+            return existing
+        bookmark = Bookmark(event_id=event_id, chosen_date=chosen_date)
+        db.add(bookmark)
+        db.commit()
+        db.refresh(bookmark)
+        return bookmark
+    finally:
+        db.close()
+
+
+@app.delete("/api/bookmarks/{event_id}")
+def remove_bookmark(event_id: int):
+    db = SessionLocal()
+    try:
+        bookmark = db.query(Bookmark).filter_by(event_id=event_id).first()
+        if not bookmark:
+            raise HTTPException(status_code=404, detail="Bookmark not found")
+        db.delete(bookmark)
+        db.commit()
+        return {"ok": True}
+    finally:
+        db.close()
+
+
+@app.post("/api/hidden/{event_id}")
+def hide_event(event_id: int):
+    db = SessionLocal()
+    try:
+        if not db.query(Event).filter(Event.id == event_id).first():
+            raise HTTPException(status_code=404, detail="Event not found")
+        if not db.query(HiddenEvent).filter_by(event_id=event_id).first():
+            db.add(HiddenEvent(event_id=event_id))
+            db.commit()
+        return {"ok": True}
+    finally:
+        db.close()
+
+
+@app.delete("/api/hidden/{event_id}")
+def unhide_event(event_id: int):
+    db = SessionLocal()
+    try:
+        h = db.query(HiddenEvent).filter_by(event_id=event_id).first()
+        if h:
+            db.delete(h)
+            db.commit()
+        return {"ok": True}
+    finally:
+        db.close()
+
+
+@app.get("/api/custom-events", response_model=list[CustomEventOut])
+def list_custom_events():
+    db = SessionLocal()
+    try:
+        return db.query(CustomEvent).order_by(CustomEvent.event_date).all()
+    finally:
+        db.close()
+
+
+@app.post("/api/custom-events", response_model=CustomEventOut)
+def create_custom_event(body: CustomEventIn):
+    db = SessionLocal()
+    try:
+        ev = CustomEvent(title=body.title, event_date=body.event_date)
+        db.add(ev)
+        db.commit()
+        db.refresh(ev)
+        return ev
+    finally:
+        db.close()
+
+
+@app.delete("/api/custom-events/{event_id}")
+def delete_custom_event(event_id: int):
+    db = SessionLocal()
+    try:
+        ev = db.query(CustomEvent).filter(CustomEvent.id == event_id).first()
+        if not ev:
+            raise HTTPException(status_code=404, detail="Custom event not found")
+        db.delete(ev)
+        db.commit()
+        return {"ok": True}
     finally:
         db.close()
 
@@ -131,7 +294,7 @@ def list_logs(limit: int = Query(50, le=200)):
 @app.get("/api/image-proxy")
 async def image_proxy(url: str = Query(...)):
     """Fetch a remote image server-side to avoid hotlink blocking."""
-    allowed_hosts = ["visitregiobarneveld.nl"]
+    allowed_hosts = ["visitregiobarneveld.nl", "app.thefeedfactory.nl", "www.wattedoenin.nl"]
     from urllib.parse import urlparse
     host = urlparse(url).hostname or ""
     if not any(host.endswith(h) for h in allowed_hosts):
@@ -148,8 +311,6 @@ async def image_proxy(url: str = Query(...)):
 @app.post("/api/scrape/{source_name}")
 def trigger_scrape(source_name: str):
     """Manually trigger a scraper run via the API."""
-    import importlib, sys
-    # lazy import to avoid circular deps
     from main import SCRAPERS, run_scraper
     if source_name not in SCRAPERS:
         raise HTTPException(status_code=404, detail=f"Unknown scraper '{source_name}'")

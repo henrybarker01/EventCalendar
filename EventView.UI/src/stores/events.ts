@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api, type Event } from '../api/client'
+import { useBookmarksStore } from './bookmarks'
+import { useHiddenStore } from './hidden'
 
 export const useEventsStore = defineStore('events', () => {
   const events = ref<Event[]>([])
@@ -8,6 +10,7 @@ export const useEventsStore = defineStore('events', () => {
   const sources = ref<string[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
+  const hasFetched = ref(false)
 
   const selectedSource = ref<string>('')
   const fromDate = ref<string>('')
@@ -16,15 +19,19 @@ export const useEventsStore = defineStore('events', () => {
 
   const filtered = computed(() => {
     const q = search.value.toLowerCase()
+    const hiddenStore = useHiddenStore()
     return events.value.filter(e =>
-      !q || e.title.toLowerCase().includes(q) || (e.description ?? '').toLowerCase().includes(q)
+      !hiddenStore.isHidden(e.id) &&
+      (!q || e.title.toLowerCase().includes(q) || (e.description ?? '').toLowerCase().includes(q))
     )
   })
 
   const filteredAttractions = computed(() => {
     const q = search.value.toLowerCase()
+    const hiddenStore = useHiddenStore()
     return attractions.value.filter(e =>
-      !q || e.title.toLowerCase().includes(q) || (e.description ?? '').toLowerCase().includes(q)
+      !hiddenStore.isHidden(e.id) &&
+      (!q || e.title.toLowerCase().includes(q) || (e.description ?? '').toLowerCase().includes(q))
     )
   })
 
@@ -38,6 +45,10 @@ export const useEventsStore = defineStore('events', () => {
       ])
       events.value = evts
       attractions.value = attrs
+      hasFetched.value = true
+      const all = [...evts, ...attrs]
+      useBookmarksStore().initFromEvents(all)
+      useHiddenStore().initFromEvents(all)
     } catch (e: any) {
       error.value = e.message ?? 'Failed to load events'
     } finally {
@@ -49,5 +60,5 @@ export const useEventsStore = defineStore('events', () => {
     sources.value = await api.getSources()
   }
 
-  return { events, attractions, sources, loading, error, filtered, filteredAttractions, selectedSource, fromDate, toDate, search, fetchEvents, fetchSources }
+  return { events, attractions, sources, loading, error, hasFetched, filtered, filteredAttractions, selectedSource, fromDate, toDate, search, fetchEvents, fetchSources }
 })

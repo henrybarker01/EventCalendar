@@ -15,11 +15,15 @@ import time
 
 from models import init_db
 from scrapers.barneveld_centrum import BarneveldCentrumScraper
+from scrapers.veluwe_nl import VeluweNlScraper
+from scrapers.wattedoenin_nl import WattedoeninNlScraper
 
 # ── Scraper registry ──────────────────────────────────────────────────
 # Maps CLI name → scraper class. Add new scrapers here.
 SCRAPERS: dict[str, type] = {
     "barneveld": BarneveldCentrumScraper,
+    "veluwe": VeluweNlScraper,
+    "wattedoenin": WattedoeninNlScraper,
 }
 
 logger = logging.getLogger("main")
