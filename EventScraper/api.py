@@ -226,7 +226,7 @@ def list_events(
     from_date: date | None = Query(None),
     to_date: date | None = Query(None),
     active_only: bool = Query(True),
-    limit: int = Query(100, le=500),
+    limit: int = Query(100, le=5000),
     offset: int = Query(0),
 ):
     db = SessionLocal()
@@ -421,7 +421,7 @@ def list_logs(limit: int = Query(50, le=200)):
 @app.get("/api/image-proxy")
 async def image_proxy(url: str = Query(...)):
     """Fetch a remote image server-side to avoid hotlink blocking."""
-    allowed_hosts = ["visitregiobarneveld.nl", "app.thefeedfactory.nl", "www.wattedoenin.nl"]
+    allowed_hosts = ["visitregiobarneveld.nl", "app.thefeedfactory.nl", "www.wattedoenin.nl", "storage.pubble.nl"]
     from urllib.parse import urlparse
     host = urlparse(url).hostname or ""
     if not any(host.endswith(h) for h in allowed_hosts):

@@ -41,8 +41,8 @@ export const useEventsStore = defineStore('events', () => {
     error.value = null
     try {
       const [evts, attrs] = await Promise.all([
-        api.getEvents({ source: selectedSource.value || undefined, event_type: 'event', from_date: fromDate.value || undefined, to_date: toDate.value || undefined, limit: 500 }),
-        api.getEvents({ source: selectedSource.value || undefined, event_type: 'attraction', limit: 500 }),
+        api.getEvents({ source: selectedSource.value || undefined, event_type: 'event', from_date: fromDate.value || undefined, to_date: toDate.value || undefined, limit: 5000 }),
+        api.getEvents({ source: selectedSource.value || undefined, event_type: 'attraction', limit: 5000 }),
       ])
       events.value = evts
       attractions.value = attrs

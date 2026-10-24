@@ -15,6 +15,7 @@ import time
 
 from models import init_db
 from scrapers.barneveld_centrum import BarneveldCentrumScraper
+from scrapers.barneveldse_krant import BarneveldseKrantScraper
 from scrapers.veluwe_nl import VeluweNlScraper
 from scrapers.wattedoenin_nl import WattedoeninNlScraper
 
@@ -24,6 +25,7 @@ SCRAPERS: dict[str, type] = {
     "barneveld": BarneveldCentrumScraper,
     "veluwe": VeluweNlScraper,
     "wattedoenin": WattedoeninNlScraper,
+    "barneveldsekrant": BarneveldseKrantScraper,
 }
 
 logger = logging.getLogger("main")
