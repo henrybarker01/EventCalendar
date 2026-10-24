@@ -6,6 +6,13 @@ services:
       - ./data:/data
     expose:
       - "8000"
+    # No Caddy of our own: the server's shared Caddy (AeroMechUI project, which owns
+    # ports 80/443) reverse-proxies calendar.aeromech.co to us over its network.
+    networks:
+      default:
+      aeromechui:
+        aliases:
+          - eventview-api
 
   scraper:
     build: .
@@ -16,19 +23,7 @@ services:
     volumes:
       - ./data:/data
 
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - api
-
-volumes:
-  caddy_data:
-  caddy_config:
+networks:
+  aeromechui:
+    external: true
+    name: aeromechui_default

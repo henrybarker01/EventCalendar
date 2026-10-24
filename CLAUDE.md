@@ -6,15 +6,14 @@ Guidance for Claude Code when working in this repository.
 
 EventView is an event aggregator for the Barneveld region. It scrapes event websites daily, stores them in SQLite, and serves them via a FastAPI + Vue 3 web app.
 
-**Target deployment:** AWS Lightsail, as Docker containers behind Caddy, at `https://calendar.aeromech.co`
+**Target deployment:** AWS Lightsail, as Docker containers behind the server's shared Caddy, at `https://calendar.aeromech.co`
 
 ## Project structure
 
 ```
 EventView/
 ├── Dockerfile                  # Multi-stage: builds Vue, packages with FastAPI backend
-├── docker-compose.yml          # Services: api, scraper, caddy
-├── Caddyfile                   # Reverse proxy + automatic HTTPS for calendar.aeromech.co
+├── docker-compose.yml          # Services: api, scraper (Caddy lives in the AeroMechUI project)
 ├── deploy.sh                   # Run on the server: git pull + docker compose up -d --build
 ├── data/                       # Bind-mounted volume: events.db, vapid_keys.json (git-ignored, server-only)
 ├── EventScraper/               # Python backend
@@ -51,7 +50,7 @@ EventView/
 - **SQLite** via SQLAlchemy — zero server, single file (`events.db`). Path is `$EVENTVIEW_DATA_DIR/events.db`, defaulting to `EventScraper/` when unset; Docker sets it to `/data`, a bind-mounted host directory, so data survives container rebuilds.
 - **Deduplication** by `(source_url, event_date)` — safe to run scrapers repeatedly.
 - **Image proxy** at `GET /api/image-proxy?url=...` — source sites block hotlinking, so images are fetched server-side by FastAPI and streamed to the browser. Vue components always use `/api/image-proxy?url=...` instead of direct image URLs.
-- **One app container, fronted by Caddy** — the `api` container runs `uvicorn api:app` (single worker — see below) serving both the REST API and the built Vue SPA from `EventView.UI/dist/`. Caddy reverse-proxies to it and handles automatic HTTPS for the public domain.
+- **One app container, fronted by a shared Caddy** — the `api` container runs `uvicorn api:app` (single worker — see below) serving both the REST API and the built Vue SPA from `EventView.UI/dist/`. EventView has no Caddy of its own: the Lightsail box already runs `aeromechui-caddy-1` (from `~/AeroMechUI`), which owns ports 80/443 for all sites. `api` joins that project's external `aeromechui_default` network under the alias `eventview-api`, and the `calendar.aeromech.co` block lives in `/home/ubuntu/AeroMechUI/Caddyfile` (`reverse_proxy eventview-api:8000`).
 - **Separate `scraper` container** runs `main.py --schedule` (the same daily loop used everywhere), sharing the SQLite file with `api` via the `./data` bind mount. This replaces the old Pi cron job.
 - **Single uvicorn worker only** — the reminder scheduler (APScheduler `BackgroundScheduler`, polling every minute inside `api.py`) runs in-process. Multiple workers would each run their own scheduler and send duplicate push notifications.
 - **Hash routing** in Vue (`createWebHashHistory`) so FastAPI's catch-all route serves `index.html` for all `/#/...` paths without conflicts.
@@ -115,7 +114,7 @@ Terminal 2: cd EventView.UI && npm run dev           # UI on :5173
 
 The Vite dev server proxies all `/api` requests to `:8000`, so both servers must be running.
 
-To test the Docker build itself locally, run `docker compose up --build` from the repo root and check `docker compose logs -f api`. Caddy only answers to the `calendar.aeromech.co` Host header and needs to reach the internet to get a cert, so exercising the site through Caddy is only meaningful against the real deployed domain.
+To test the Docker build itself locally, first `docker network create aeromechui_default` (the compose file expects that external network to exist), then run `docker compose up --build` from the repo root and check `docker compose logs -f api`. HTTPS/Caddy can only be exercised on the server against the real domain.
 
 ## Deploying to Lightsail
 
@@ -126,7 +125,7 @@ cd ~/EventView   # wherever the repo was cloned
 ./deploy.sh      # git pull && docker compose up -d --build
 ```
 
-`deploy.sh` also prunes dangling images and prints `docker compose ps` so you can confirm all three services (`api`, `scraper`, `caddy`) are up.
+`deploy.sh` also prunes dangling images and prints `docker compose ps` so you can confirm both services (`api`, `scraper`) are up.
 
 **One-time server setup** (already done on the current instance, but for reference):
 ```bash
@@ -137,13 +136,20 @@ mkdir -p data                    # create it yourself so it isn't root-owned by 
 docker compose up -d --build
 ```
 
-Requires on the instance: Docker + Docker Compose plugin, git, and DNS for `calendar.aeromech.co` pointed at the instance's static IP. The Lightsail firewall must allow inbound 80 and 443 (Caddy needs 80 for the Let's Encrypt HTTP challenge as well as redirecting to HTTPS). Caddy stores its certificates in the `caddy_data` Docker volume, so they persist across `deploy.sh` runs.
+Requires on the instance: Docker + Docker Compose plugin, git, DNS for `calendar.aeromech.co` pointed at the instance's static IP, and the AeroMechUI stack running (its network must exist before `docker compose up`). Its Caddyfile needs:
+```
+calendar.aeromech.co {
+	encode gzip
+	reverse_proxy eventview-api:8000
+}
+```
+After editing it: `cd ~/AeroMechUI && docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile`. Certificates live in AeroMechUI's `caddy_data` volume.
 
 Useful commands on the server:
 ```bash
 docker compose logs -f api        # API logs
 docker compose logs -f scraper    # Scrape run history (replaces the old scraper.log)
-docker compose logs -f caddy      # TLS/reverse-proxy issues
+docker logs -f aeromechui-caddy-1 # TLS/reverse-proxy issues (shared Caddy)
 docker compose exec api python view_db.py --logs
 ```
 
