@@ -21,7 +21,7 @@ EventView/
 │   │   └── barneveld_centrum.py
 │   ├── api.py                  # FastAPI — REST API + serves Vue dist/
 │   ├── base_scraper.py         # Abstract base class for all scrapers
-│   ├── config.py               # DB path (EVENTVIEW_DATA_DIR-overridable), timeouts, worker tuning
+│   ├── config.py               # DB path (EVENTVIEW_DATA_DIR-overridable), timeouts, worker tuning, 25 km radius
 │   ├── main.py                 # CLI entry point + scraper registry
 │   ├── models.py               # SQLAlchemy: Event + ScrapingLog tables
 │   ├── scraper_template.py     # Starting point for new scrapers
@@ -162,5 +162,9 @@ docker compose exec api python view_db.py --logs
 5. Test with `python main.py --scraper <name>`.
 
 Reference implementation: [`EventScraper/scrapers/barneveld_centrum.py`](EventScraper/scrapers/barneveld_centrum.py).
+
+If the source covers a wider region than Barneveld, keep only nearby events with `is_nearby(lat, lng)` from `base_scraper.py` (radius `MAX_DISTANCE_KM` in `config.py`) — see `veluwe_nl.py` and `wattedoenin_nl.py`.
+
+Rows are deduplicated on `(source_url, event_date)`, so never use a date that moves from day to day (such as a "next date" that rolls forward); emit one row per real date instead.
 
 If a new site blocks hotlinking, add its hostname to the `allowed_hosts` list in the `image_proxy` endpoint in `api.py`.

@@ -12,6 +12,11 @@ REQUEST_TIMEOUT = 15  # seconds
 REQUEST_DELAY = 1.0   # seconds between requests
 MAX_WORKERS = 2       # tuned for Raspberry Pi 4B
 
+# Sources that cover a wider region (veluwe, wattedoenin) keep only events
+# within this distance of Barneveld centre.
+HOME_LAT, HOME_LNG = 52.1403, 5.5832
+MAX_DISTANCE_KM = 25
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (compatible; EventViewBot/1.0; "

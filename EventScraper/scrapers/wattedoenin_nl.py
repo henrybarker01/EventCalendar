@@ -1,37 +1,52 @@
 """
-Scraper for wattedoenin.nl/uitagenda/gelderland/
+Scraper for wattedoenin.nl/uitagenda/gelderland/ and /uitagenda/utrecht/
 
-Card structure (div.evenement with Schema.org microdata):
+Barneveld sits near the provincial border, so the Utrecht agenda is read too
+(Amersfoort, Veenendaal, the Heuvelrug). Both cover a whole province; cards
+are filtered here to MAX_DISTANCE_KM around Barneveld, which usually leaves
+only a handful.
+
+Card structure (div.evenement with Schema.org microdata, as of October 2026):
     <div class="evenement" itemscope itemtype="http://schema.org/Event">
       <h3><span itemprop="name">Event Title</span></h3>
-      <a href="/evenementen/slug/" itemprop="url">
+      <a href="https://www.wattedoenin.nl/evenementen/slug/" itemprop="url">
         <img data-src="...-100x100.jpg"
              data-srcset="...-100x100.jpg 100w, ...original.jpg 120w, ...original.jpg 200w">
       </a>
       <div class="event-excerpt">
         <span itemprop="location" ...>
           <span itemprop="name">Venue</span>,
-          <span itemprop="addressLocality">City</span>
+          <span itemprop="address" ...><span itemprop="addressLocality">City</span></span>
+          <span itemprop="geo" ...>
+            <meta content="52.098152" itemprop="latitude"/>
+            <meta content="5.829219" itemprop="longitude"/>
+          </span>
         </span>
         - <span itemprop="description">...</span>
       </div>
       <div>
-        <meta content="2026-06-13T00:00:00+02:00" itemprop="startDate"/>
-        <meta content="2026-06-21T23:59:59+02:00" itemprop="endDate"/>
+        <strong>
+          <meta content="2026-10-10T00:00:00+02:00" itemprop="startDate"/> ... t/m
+          <meta content="2026-10-25T23:59:59+01:00" itemprop="endDate"/> ...
+        </strong>
       </div>
     </div>
 
-Pagination: WordPress /page/N/ style; stops when a page returns 0 cards.
+Pagination (WordPress Events Manager, 15 cards per page) is ?pno=N; this
+follows .em-pagination a.next until there is none. (/page/N/ just serves
+page 1 again.)
 Dates are ISO 8601 with TZ offset — parsed with datetime.fromisoformat().
 Images are lazy-loaded; actual URL is in data-srcset (largest) or data-src.
 """
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime
+from urllib.parse import urljoin
 
-from base_scraper import BaseScraper
+from base_scraper import BaseScraper, is_nearby
 
-BASE_URL = "https://www.wattedoenin.nl/uitagenda/gelderland/"
-MAX_PAGES = 15
+SITE = "https://www.wattedoenin.nl"
+REGIONS = ("gelderland", "utrecht")
+MAX_PAGES = 15  # per region
 
 
 def _largest_from_srcset(srcset: str) -> str | None:
@@ -48,36 +63,47 @@ def _parse_iso_date(content: str) -> date | None:
         return None
 
 
+def _geo(card) -> tuple[float, float] | None:
+    lat_el = card.select_one("[itemprop='geo'] meta[itemprop='latitude']")
+    lng_el = card.select_one("[itemprop='geo'] meta[itemprop='longitude']")
+    try:
+        return float(lat_el["content"]), float(lng_el["content"])
+    except (TypeError, KeyError, ValueError):
+        return None
+
+
 class WattedoeninNlScraper(BaseScraper):
     source_name = "wattedoenin"
-    base_url = BASE_URL
+    base_url = f"{SITE}/uitagenda/"
 
     def parse_events(self) -> list[dict]:
         events = []
         seen_urls: set[str] = set()
+        total = 0
 
-        for page in range(1, MAX_PAGES + 1):
-            url = BASE_URL if page == 1 else f"{BASE_URL}page/{page}/"
-            soup = self.fetch_page(url)
-            cards = soup.select("div.evenement")
-            self.logger.info("Page %d: %d cards.", page, len(cards))
+        for region in REGIONS:
+            url = f"{self.base_url}{region}/"
+            for page in range(1, MAX_PAGES + 1):
+                soup = self.fetch_page(url)
+                cards = soup.select("div.evenement")
+                self.logger.info("%s page %d: %d cards.", region, page, len(cards))
+                total += len(cards)
 
-            if not cards:
-                break
+                for card in cards:
+                    geo = _geo(card)
+                    if geo is None or not is_nearby(*geo):
+                        continue
+                    ev = self._parse_card(card)
+                    if ev and ev["source_url"] not in seen_urls:
+                        seen_urls.add(ev["source_url"])
+                        events.append(ev)
 
-            new_on_page = 0
-            for card in cards:
-                ev = self._parse_card(card)
-                if ev and ev["source_url"] not in seen_urls:
-                    seen_urls.add(ev["source_url"])
-                    events.append(ev)
-                    new_on_page += 1
+                next_el = soup.select_one(".em-pagination a.next[href]")
+                if not next_el:
+                    break
+                url = urljoin(url, next_el["href"])
 
-            # If every card on this page was already seen, we've looped back
-            if new_on_page == 0:
-                break
-
-        self.logger.info("Total unique events: %d.", len(events))
+        self.logger.info("%d cards, %d events nearby.", total, len(events))
         return events
 
     def _parse_card(self, card) -> dict | None:
