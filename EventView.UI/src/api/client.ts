@@ -28,6 +28,14 @@ export interface CustomEvent {
   created_at: string
 }
 
+export interface Reminder {
+  id: number
+  event_id: number
+  remind_at: string
+  sent: boolean
+  created_at: string
+}
+
 export interface ScrapingLog {
   id: number
   source_name: string
@@ -93,5 +101,29 @@ export const api = {
 
   unhideEvent(eventId: number) {
     return http.delete(`/hidden/${eventId}`).then(r => r.data)
+  },
+
+  getVapidPublicKey() {
+    return http.get<{ public_key: string }>('/push/vapid-key').then(r => r.data.public_key)
+  },
+
+  getReminders() {
+    return http.get<Reminder[]>('/reminders').then(r => r.data)
+  },
+
+  createReminder(
+    eventId: number,
+    remindAt: string,
+    subscription: { endpoint: string; p256dh: string; auth: string },
+  ) {
+    return http.post<Reminder>('/reminders', {
+      event_id: eventId,
+      remind_at: remindAt,
+      subscription,
+    }).then(r => r.data)
+  },
+
+  deleteReminder(reminderId: number) {
+    return http.delete(`/reminders/${reminderId}`).then(r => r.data)
   },
 }

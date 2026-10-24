@@ -4,20 +4,25 @@ Guidance for Claude Code when working in this repository.
 
 ## Project overview
 
-EventView is a Raspberry Pi-hosted event aggregator for the Barneveld region. It scrapes event websites daily, stores them in SQLite, and serves them via a FastAPI + Vue 3 web app accessible on the local network.
+EventView is an event aggregator for the Barneveld region. It scrapes event websites daily, stores them in SQLite, and serves them via a FastAPI + Vue 3 web app.
 
-**Target deployment:** Raspberry Pi 4B at `192.168.178.240:8000`
+**Target deployment:** AWS Lightsail, as Docker containers behind Caddy, at `https://calendar.aeromech.co`
 
 ## Project structure
 
 ```
 EventView/
+├── Dockerfile                  # Multi-stage: builds Vue, packages with FastAPI backend
+├── docker-compose.yml          # Services: api, scraper, caddy
+├── Caddyfile                   # Reverse proxy + automatic HTTPS for calendar.aeromech.co
+├── deploy.sh                   # Run on the server: git pull + docker compose up -d --build
+├── data/                       # Bind-mounted volume: events.db, vapid_keys.json (git-ignored, server-only)
 ├── EventScraper/               # Python backend
 │   ├── scrapers/               # One file per source website
 │   │   └── barneveld_centrum.py
 │   ├── api.py                  # FastAPI — REST API + serves Vue dist/
 │   ├── base_scraper.py         # Abstract base class for all scrapers
-│   ├── config.py               # DB path, timeouts, Pi-tuned settings
+│   ├── config.py               # DB path (EVENTVIEW_DATA_DIR-overridable), timeouts, worker tuning
 │   ├── main.py                 # CLI entry point + scraper registry
 │   ├── models.py               # SQLAlchemy: Event + ScrapingLog tables
 │   ├── scraper_template.py     # Starting point for new scrapers
@@ -43,10 +48,12 @@ EventView/
 
 ## Key architectural decisions
 
-- **SQLite** via SQLAlchemy — zero server, single file (`EventScraper/events.db`, git-ignored).
+- **SQLite** via SQLAlchemy — zero server, single file (`events.db`). Path is `$EVENTVIEW_DATA_DIR/events.db`, defaulting to `EventScraper/` when unset; Docker sets it to `/data`, a bind-mounted host directory, so data survives container rebuilds.
 - **Deduplication** by `(source_url, event_date)` — safe to run scrapers repeatedly.
 - **Image proxy** at `GET /api/image-proxy?url=...` — source sites block hotlinking, so images are fetched server-side by FastAPI and streamed to the browser. Vue components always use `/api/image-proxy?url=...` instead of direct image URLs.
-- **Single process on Pi** — `python api.py` serves both the REST API and the built Vue SPA from `EventView.UI/dist/`. No Nginx needed for the app itself (Nginx is already used by Klipper/Mainsail on port 80).
+- **One app container, fronted by Caddy** — the `api` container runs `uvicorn api:app` (single worker — see below) serving both the REST API and the built Vue SPA from `EventView.UI/dist/`. Caddy reverse-proxies to it and handles automatic HTTPS for the public domain.
+- **Separate `scraper` container** runs `main.py --schedule` (the same daily loop used everywhere), sharing the SQLite file with `api` via the `./data` bind mount. This replaces the old Pi cron job.
+- **Single uvicorn worker only** — the reminder scheduler (APScheduler `BackgroundScheduler`, polling every minute inside `api.py`) runs in-process. Multiple workers would each run their own scheduler and send duplicate push notifications.
 - **Hash routing** in Vue (`createWebHashHistory`) so FastAPI's catch-all route serves `index.html` for all `/#/...` paths without conflicts.
 
 ## API endpoints
@@ -108,29 +115,36 @@ Terminal 2: cd EventView.UI && npm run dev           # UI on :5173
 
 The Vite dev server proxies all `/api` requests to `:8000`, so both servers must be running.
 
-## Deploying to the Pi
+To test the Docker build itself locally, run `docker compose up --build` from the repo root and check `docker compose logs -f api`. Caddy only answers to the `calendar.aeromech.co` Host header and needs to reach the internet to get a cert, so exercising the site through Caddy is only meaningful against the real deployed domain.
 
-Build the frontend locally, then copy to the Pi:
+## Deploying to Lightsail
 
-```powershell
-# Build
-cd EventView.UI; npm run build
+Deployment pulls from git — there is no scp/build-and-copy step anymore. Push (or merge) to `main`, then on the Lightsail instance:
 
-# Copy to Pi (from Windows PowerShell)
-scp "EventScraper\api.py" pi@192.168.178.240:/home/pi/EventView/EventScraper/api.py
-scp -r "EventView.UI\dist" pi@192.168.178.240:/home/pi/EventView/EventView.UI/
-```
-
-On the Pi:
 ```bash
-sudo systemctl restart eventview
+cd ~/EventView   # wherever the repo was cloned
+./deploy.sh      # git pull && docker compose up -d --build
 ```
 
-The systemd service file is at `/etc/systemd/system/eventview.service`. It runs `python api.py` as user `pi` from `/home/pi/EventView/EventScraper`.
+`deploy.sh` also prunes dangling images and prints `docker compose ps` so you can confirm all three services (`api`, `scraper`, `caddy`) are up.
 
-The daily scraper runs via cron (crontab for user `pi`):
+**One-time server setup** (already done on the current instance, but for reference):
+```bash
+git clone https://github.com/henrybarker01/EventCalendar.git EventView
+cd EventView
+mkdir -p data                    # create it yourself so it isn't root-owned by Docker
+# optional: copy an existing events.db / vapid_keys.json into data/ first
+docker compose up -d --build
 ```
-0 6 * * * cd /home/pi/EventView/EventScraper && venv/bin/python main.py --all >> /home/pi/EventView/scraper.log 2>&1
+
+Requires on the instance: Docker + Docker Compose plugin, git, and DNS for `calendar.aeromech.co` pointed at the instance's static IP. The Lightsail firewall must allow inbound 80 and 443 (Caddy needs 80 for the Let's Encrypt HTTP challenge as well as redirecting to HTTPS). Caddy stores its certificates in the `caddy_data` Docker volume, so they persist across `deploy.sh` runs.
+
+Useful commands on the server:
+```bash
+docker compose logs -f api        # API logs
+docker compose logs -f scraper    # Scrape run history (replaces the old scraper.log)
+docker compose logs -f caddy      # TLS/reverse-proxy issues
+docker compose exec api python view_db.py --logs
 ```
 
 ## Adding a new scraper
@@ -144,10 +158,3 @@ The daily scraper runs via cron (crontab for user `pi`):
 Reference implementation: [`EventScraper/scrapers/barneveld_centrum.py`](EventScraper/scrapers/barneveld_centrum.py).
 
 If a new site blocks hotlinking, add its hostname to the `allowed_hosts` list in the `image_proxy` endpoint in `api.py`.
-
-## Pi environment notes
-
-- The Pi also runs Klipper (3D printer firmware) with Moonraker on port 7125 and Mainsail/Fluidd on port 80 via Nginx. These do not conflict with EventView on port 8000.
-- Python version on Pi: 3.x (Debian-based, Raspberry Pi OS).
-- `venv` lives inside `EventScraper/` on the Pi, not committed to git.
-- `events.db` lives inside `EventScraper/` on the Pi, not committed to git.

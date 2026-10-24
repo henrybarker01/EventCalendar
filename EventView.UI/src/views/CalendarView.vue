@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
+import 'emoji-picker-element'
 import { useRouter } from 'vue-router'
 import { useEventsStore } from '../stores/events'
 import { useBookmarksStore } from '../stores/bookmarks'
@@ -11,8 +12,12 @@ const eventsStore = useEventsStore()
 const bookmarksStore = useBookmarksStore()
 const customEventsStore = useCustomEventsStore()
 
+function localDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 const today = new Date()
-const todayStr = today.toISOString().slice(0, 10)
+const todayStr = localDateStr(today)
 const currentMonthStart = ref(new Date(today.getFullYear(), today.getMonth(), 1))
 
 const WEEKDAYS = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo']
@@ -50,7 +55,7 @@ const gridCells = computed(() => {
   return Array.from({ length: 42 }, (_, i) => {
     const d = new Date(gridStart)
     d.setDate(gridStart.getDate() + i)
-    const dateStr = d.toISOString().slice(0, 10)
+    const dateStr = localDateStr(d)
     return { date: d, dateStr, isCurrentMonth: d.getMonth() === month, isToday: dateStr === todayStr }
   })
 })
@@ -84,7 +89,9 @@ function chipPriority(c: Chip): number {
   return 2
 }
 
-const cellChips = computed((): Record<string, Chip[]> => {
+const calFilter = ref<'all' | 'planned'>('all')
+
+const allCellChips = computed((): Record<string, Chip[]> => {
   const result: Record<string, Chip[]> = {}
 
   for (const [date, evts] of Object.entries(eventsByDate.value)) {
@@ -102,6 +109,16 @@ const cellChips = computed((): Record<string, Chip[]> => {
     result[date].sort((a, b) => chipPriority(a) - chipPriority(b))
   }
 
+  return result
+})
+
+const cellChips = computed((): Record<string, Chip[]> => {
+  if (calFilter.value === 'all') return allCellChips.value
+  const result: Record<string, Chip[]> = {}
+  for (const [date, chips] of Object.entries(allCellChips.value)) {
+    const planned = chips.filter(c => c.kind === 'custom' || (c.kind === 'scraped' && c.booked))
+    if (planned.length) result[date] = planned
+  }
   return result
 })
 
@@ -127,16 +144,28 @@ const newTitle = ref('')
 const saving = ref(false)
 const saveError = ref('')
 
-const QUICK_EMOJI = ['🎂','🎉','🏃','🍕','🎬','🛒','✈️','🎵','💪','🏊','🎮','📚','🌿','🐶','❤️']
+const showEmojiPicker = ref(false)
+const pickerEl = ref<HTMLElement | null>(null)
+
+watch(pickerEl, (el) => {
+  if (!el) return
+  el.addEventListener('emoji-click', (e: Event) => {
+    newTitle.value += (e as CustomEvent<{ unicode: string }>).detail.unicode
+    showEmojiPicker.value = false
+  })
+})
+
+function removeCustomEvent(id: number) {
+  if (confirm('Weet je zeker dat je dit wilt verwijderen?')) {
+    customEventsStore.remove(id)
+  }
+}
 
 function openAdd(dateStr: string, label: string) {
   addModal.value = { dateStr, label }
   newTitle.value = ''
   saveError.value = ''
-}
-
-function appendEmoji(emoji: string) {
-  newTitle.value += emoji
+  showEmojiPicker.value = false
 }
 
 async function confirmAdd() {
@@ -196,11 +225,15 @@ onMounted(async () => {
       Klik op + op een dag om iets toe te voegen, of ster bij een evenement.
     </p>
 
-    <!-- Month navigation -->
+    <!-- Month navigation + filter -->
     <div class="calendar-header">
       <button class="cal-nav" @click="prevMonth">&#8249;</button>
       <h2 class="cal-month-label">{{ monthLabel }}</h2>
       <button class="cal-nav" @click="nextMonth">&#8250;</button>
+    </div>
+    <div class="cal-filter-bar">
+      <button class="cal-filter-btn" :class="{ active: calFilter === 'all' }" @click="calFilter = 'all'">Alles</button>
+      <button class="cal-filter-btn" :class="{ active: calFilter === 'planned' }" @click="calFilter = 'planned'">Alleen gepland</button>
     </div>
 
     <p v-if="eventsStore.loading" class="status-msg">Laden...</p>
@@ -219,7 +252,7 @@ onMounted(async () => {
         }"
       >
         <div class="cal-cell-header">
-          <span class="cal-day-num">{{ cell.date.getDate() }}</span>
+          <button class="cal-day-num" @click="openDay(cell.dateStr)">{{ cell.date.getDate() }}</button>
           <button
             v-if="cell.isCurrentMonth"
             class="cal-add-btn"
@@ -241,7 +274,7 @@ onMounted(async () => {
             <!-- Custom event -->
             <span v-else class="cal-chip cal-chip--custom">
               <span class="cal-chip-label">{{ chip.title }}</span>
-              <button class="cal-chip-delete" title="Verwijderen" @click.stop="customEventsStore.remove(chip.id)">×</button>
+              <button class="cal-chip-delete" title="Verwijderen" @click.stop="removeCustomEvent(chip.id)">×</button>
             </span>
           </template>
 
@@ -261,20 +294,23 @@ onMounted(async () => {
         <div class="modal">
           <h3 class="modal-title">{{ dayModal.label }}</h3>
           <div class="day-detail-list">
-            <template v-for="chip in (cellChips[dayModal.dateStr] ?? [])" :key="chip.kind + chip.id">
-              <div
-                v-if="chip.kind === 'scraped'"
-                class="day-detail-item"
-                @click="router.push(`/events/${chip.id}`); dayModal = null"
-              >
-                <span v-if="chip.booked" class="day-detail-star">★</span>
-                <span class="day-detail-title">{{ chip.title }}</span>
-              </div>
-              <div v-else class="day-detail-item day-detail-item--custom">
-                <span class="day-detail-title">{{ chip.title }}</span>
-                <button class="cal-chip-delete" title="Verwijderen" @click.stop="customEventsStore.remove(chip.id)">×</button>
-              </div>
+            <template v-if="(allCellChips[dayModal.dateStr] ?? []).length">
+              <template v-for="chip in (allCellChips[dayModal.dateStr] ?? [])" :key="chip.kind + chip.id">
+                <div
+                  v-if="chip.kind === 'scraped'"
+                  class="day-detail-item"
+                  @click="router.push(`/events/${chip.id}`); dayModal = null"
+                >
+                  <span v-if="chip.booked" class="day-detail-star">★</span>
+                  <span class="day-detail-title">{{ chip.title }}</span>
+                </div>
+                <div v-else class="day-detail-item day-detail-item--custom">
+                  <span class="day-detail-title">{{ chip.title }}</span>
+                  <button class="cal-chip-delete" title="Verwijderen" @click.stop="removeCustomEvent(chip.id)">×</button>
+                </div>
+              </template>
             </template>
+            <p v-else class="status-msg" style="padding:.75rem 0">Geen activiteiten op deze dag.</p>
           </div>
           <div class="modal-actions">
             <button class="modal-btn modal-btn--cancel" @click="dayModal = null">Sluiten</button>
@@ -290,24 +326,24 @@ onMounted(async () => {
         <div class="modal">
           <h3 class="modal-title">Toevoegen</h3>
           <p class="modal-event-name">{{ addModal.label }}</p>
-          <input
-            class="modal-date-input"
-            type="text"
-            v-model="newTitle"
-            placeholder="Bijv. 🎂 Verjaardag of 🏃 Hardlopen"
-            maxlength="200"
-            autofocus
-            @keydown.enter="confirmAdd"
-            @keydown.esc="addModal = null"
-          />
-          <div class="emoji-quickpick">
+          <div class="emoji-input-wrap">
             <button
-              v-for="e in QUICK_EMOJI"
-              :key="e"
-              class="emoji-btn"
               type="button"
-              @click="appendEmoji(e)"
-            >{{ e }}</button>
+              class="emoji-toggle-btn"
+              :class="{ active: showEmojiPicker }"
+              @click.stop="showEmojiPicker = !showEmojiPicker"
+              title="Emoji kiezen"
+            >😊</button>
+            <input
+              class="modal-date-input emoji-text-input"
+              type="text"
+              v-model="newTitle"
+              placeholder="Bijv. 🎂 Verjaardag of 🏃 Hardlopen"
+              maxlength="200"
+              autofocus
+              @keydown.enter="confirmAdd"
+              @keydown.esc="addModal = null"
+            />
           </div>
           <p v-if="saveError" class="modal-error">{{ saveError }}</p>
           <div class="modal-actions">
@@ -318,6 +354,15 @@ onMounted(async () => {
           </div>
         </div>
       </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <template v-if="showEmojiPicker && addModal">
+        <div class="emoji-backdrop" @click="showEmojiPicker = false"></div>
+        <div class="emoji-panel">
+          <emoji-picker ref="pickerEl"></emoji-picker>
+        </div>
+      </template>
     </Teleport>
   </div>
 </template>

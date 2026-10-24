@@ -80,6 +80,33 @@ class CustomEvent(Base):
         return f"<CustomEvent {self.title!r} on {self.event_date}>"
 
 
+class PushSubscription(Base):
+    __tablename__ = "push_subscriptions"
+
+    id = Column(Integer, primary_key=True)
+    endpoint = Column(String(2048), unique=True, nullable=False)
+    p256dh = Column(String(512), nullable=False)
+    auth = Column(String(256), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<PushSubscription {self.endpoint[:40]!r}>"
+
+
+class Reminder(Base):
+    __tablename__ = "reminders"
+
+    id = Column(Integer, primary_key=True)
+    event_id = Column(Integer, ForeignKey("events.id"), nullable=False)
+    subscription_id = Column(Integer, ForeignKey("push_subscriptions.id"), nullable=False)
+    remind_at = Column(DateTime, nullable=False)
+    sent = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<Reminder event_id={self.event_id} at={self.remind_at}>"
+
+
 class ScrapingLog(Base):
     __tablename__ = "scraping_logs"
 

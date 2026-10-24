@@ -5,3 +5,7 @@ venv/
 .venv/
 *.db
 *.db-journal
+vapid_keys.json
+
+# Docker bind-mounted app data on the server (events.db, vapid_keys.json)
+data/

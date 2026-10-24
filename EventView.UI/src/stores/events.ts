@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { api, type Event } from '../api/client'
 import { useBookmarksStore } from './bookmarks'
 import { useHiddenStore } from './hidden'
+import { useRemindersStore } from './reminders'
 
 export const useEventsStore = defineStore('events', () => {
   const events = ref<Event[]>([])
@@ -49,6 +50,7 @@ export const useEventsStore = defineStore('events', () => {
       const all = [...evts, ...attrs]
       useBookmarksStore().initFromEvents(all)
       useHiddenStore().initFromEvents(all)
+      useRemindersStore().fetchReminders()
     } catch (e: any) {
       error.value = e.message ?? 'Failed to load events'
     } finally {

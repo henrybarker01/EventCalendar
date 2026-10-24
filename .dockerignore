@@ -1,0 +1,19 @@
+# Python
+**/__pycache__/
+**/*.pyc
+EventScraper/venv/
+EventScraper/.venv/
+EventScraper/events.db
+EventScraper/events.csv
+EventScraper/vapid_keys.json
+venv/
+.venv/
+
+# Node / frontend build output (rebuilt inside the image)
+EventView.UI/node_modules/
+EventView.UI/dist/
+
+# Misc
+.git/
+data/
+*.md

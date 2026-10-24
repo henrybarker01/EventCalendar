@@ -1,0 +1,34 @@
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - ./data:/data
+    expose:
+      - "8000"
+
+  scraper:
+    build: .
+    restart: unless-stopped
+    # --init-db is idempotent (safe to re-run) and guards against the scraper
+    # container winning the race to touch the DB before the api container does.
+    command: ["sh", "-c", "python main.py --init-db && python main.py --schedule"]
+    volumes:
+      - ./data:/data
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+volumes:
+  caddy_data:
+  caddy_config:

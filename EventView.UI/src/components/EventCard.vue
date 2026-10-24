@@ -4,14 +4,21 @@ import { useRouter } from 'vue-router'
 import type { Event } from '../api/client'
 import { useBookmarksStore } from '../stores/bookmarks'
 import { useHiddenStore } from '../stores/hidden'
+import { useRemindersStore } from '../stores/reminders'
+import { usePushNotifications } from '../composables/usePushNotifications'
+import ReminderModal from './ReminderModal.vue'
 
 const props = defineProps<{ event: Event; displayDate?: string }>()
 const router = useRouter()
 const bookmarksStore = useBookmarksStore()
 const hiddenStore = useHiddenStore()
+const remindersStore = useRemindersStore()
+const { ensureSubscription } = usePushNotifications()
 
 const showModal = ref(false)
 const pickedDate = ref('')
+const showReminderModal = ref(false)
+const pendingSubscription = ref<{ endpoint: string; p256dh: string; auth: string } | null>(null)
 
 function handleBookmarkClick() {
   if (bookmarksStore.isBookmarked(props.event.id)) {
@@ -30,6 +37,30 @@ function confirmDate() {
   showModal.value = false
 }
 
+async function handleReminderClick() {
+  if (remindersStore.hasReminder(props.event.id)) {
+    const reminder = remindersStore.getReminder(props.event.id)
+    if (reminder) await remindersStore.removeReminder(reminder.id)
+    return
+  }
+
+  const sub = await ensureSubscription()
+  if (!sub) {
+    alert('Sta meldingen toe in je browser en probeer opnieuw.')
+    return
+  }
+
+  pendingSubscription.value = sub
+  showReminderModal.value = true
+}
+
+async function confirmReminder(remindAt: string) {
+  if (!pendingSubscription.value) return
+  await remindersStore.addReminder(props.event.id, remindAt, pendingSubscription.value)
+  showReminderModal.value = false
+  pendingSubscription.value = null
+}
+
 function formatDate(d: string) {
   return new Date(d).toLocaleDateString('nl-NL', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })
 }
@@ -46,6 +77,12 @@ function proxyUrl(url: string) {
       title="Niet meer tonen"
       @click.stop="hiddenStore.hide(event.id)"
     >✕</button>
+    <button
+      class="reminder-btn"
+      :class="{ 'has-reminder': remindersStore.hasReminder(event.id) }"
+      :title="remindersStore.hasReminder(event.id) ? 'Herinnering annuleren' : 'Herinnering instellen'"
+      @click.stop="handleReminderClick"
+    >🔔</button>
     <button
       class="bookmark-btn"
       :class="{ 'is-bookmarked': bookmarksStore.isBookmarked(event.id) }"
@@ -79,5 +116,14 @@ function proxyUrl(url: string) {
         </div>
       </div>
     </div>
+  </Teleport>
+
+  <Teleport to="body">
+    <ReminderModal
+      v-if="showReminderModal"
+      :event="event"
+      @confirm="confirmReminder"
+      @cancel="showReminderModal = false"
+    />
   </Teleport>
 </template>

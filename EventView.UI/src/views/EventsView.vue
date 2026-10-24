@@ -20,7 +20,21 @@ const hiddenEvents = computed(() =>
 )
 const activeTab = ref<'events' | 'attractions' | 'booked'>('events')
 
-const todayStr = new Date().toISOString().slice(0, 10)
+function localDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+const todayStr = localDateStr(new Date())
+
+// Hide past events unless the user has explicitly set a from-date filter.
+const filteredEvents = computed(() => {
+  if (store.fromDate) return store.filtered
+  return store.filtered.filter(e => !e.event_date || e.event_date >= todayStr)
+})
+
+// Attractions have no from_date filter in the API, so always hide past ones.
+const filteredAttractions = computed(() =>
+  store.filteredAttractions.filter(e => !e.event_date || e.event_date >= todayStr)
+)
 
 const bookedUpcoming = computed(() => {
   const all = [...store.events, ...store.attractions]
@@ -76,11 +90,11 @@ watch([() => store.selectedSource, () => store.fromDate, () => store.toDate], ()
   <div class="tab-bar">
     <button class="tab-btn" :class="{ active: activeTab === 'events' }" @click="activeTab = 'events'">
       Evenementen
-      <span class="tab-count">{{ store.filtered.length }}</span>
+      <span class="tab-count">{{ filteredEvents.length }}</span>
     </button>
     <button class="tab-btn" :class="{ active: activeTab === 'attractions' }" @click="activeTab = 'attractions'">
       Te doen
-      <span class="tab-count">{{ store.filteredAttractions.length }}</span>
+      <span class="tab-count">{{ filteredAttractions.length }}</span>
     </button>
     <button class="tab-btn" :class="{ active: activeTab === 'booked' }" @click="activeTab = 'booked'">
       Gepland
@@ -92,16 +106,16 @@ watch([() => store.selectedSource, () => store.fromDate, () => store.toDate], ()
   <p v-else-if="store.error" class="status-msg">⚠️ {{ store.error }}</p>
   <template v-else>
     <template v-if="activeTab === 'events'">
-      <p v-if="store.filtered.length === 0" class="status-msg">Geen evenementen gevonden.</p>
+      <p v-if="filteredEvents.length === 0" class="status-msg">Geen evenementen gevonden.</p>
       <div v-else class="event-grid">
-        <EventCard v-for="event in store.filtered" :key="event.id" :event="event" />
+        <EventCard v-for="event in filteredEvents" :key="event.id" :event="event" />
       </div>
     </template>
 
     <template v-else-if="activeTab === 'attractions'">
-      <p v-if="store.filteredAttractions.length === 0" class="status-msg">Geen activiteiten gevonden.</p>
+      <p v-if="filteredAttractions.length === 0" class="status-msg">Geen activiteiten gevonden.</p>
       <div v-else class="event-grid">
-        <EventCard v-for="event in store.filteredAttractions" :key="event.id" :event="event" />
+        <EventCard v-for="event in filteredAttractions" :key="event.id" :event="event" />
       </div>
     </template>
 

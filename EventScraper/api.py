@@ -6,7 +6,9 @@ FastAPI server — serves the REST API and (optionally) the Vue frontend.
     uvicorn api:app --host 0.0.0.0 --port 8000 --reload
 """
 
+import json
 import os
+from contextlib import asynccontextmanager
 from datetime import date, datetime
 
 import httpx
@@ -16,10 +18,112 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import desc
+from apscheduler.schedulers.background import BackgroundScheduler
+from pywebpush import webpush, WebPushException
 
-from models import Event, Bookmark, CustomEvent, HiddenEvent, ScrapingLog, SessionLocal, init_db
+from config import DATA_DIR
+from models import (
+    Event, Bookmark, CustomEvent, HiddenEvent, ScrapingLog,
+    PushSubscription, Reminder,
+    SessionLocal, init_db,
+)
 
-app = FastAPI(title="EventView API", version="1.0.0")
+
+# ── VAPID keys ────────────────────────────────────────────────────────
+
+VAPID_KEYS_FILE = os.path.join(DATA_DIR, "vapid_keys.json")
+VAPID_CONTACT = "mailto:henry.barker@unexus.nl"
+
+
+def _load_or_generate_vapid_keys():
+    if os.path.exists(VAPID_KEYS_FILE):
+        with open(VAPID_KEYS_FILE) as f:
+            keys = json.load(f)
+        return keys["private_key"], keys["public_key"]
+
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives import serialization
+    import base64
+
+    priv = ec.generate_private_key(ec.SECP256R1())
+    private_pem = priv.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.TraditionalOpenSSL,
+        serialization.NoEncryption(),
+    ).decode()
+    pub_bytes = priv.public_key().public_bytes(
+        serialization.Encoding.X962,
+        serialization.PublicFormat.UncompressedPoint,
+    )
+    public_key = base64.urlsafe_b64encode(pub_bytes).rstrip(b"=").decode()
+
+    with open(VAPID_KEYS_FILE, "w") as f:
+        json.dump({"private_key": private_pem, "public_key": public_key}, f)
+    print(f"[EventView] Generated VAPID keys → {VAPID_KEYS_FILE}")
+    return private_pem, public_key
+
+
+VAPID_PRIVATE_KEY, VAPID_PUBLIC_KEY = _load_or_generate_vapid_keys()
+
+
+# ── Reminder scheduler ────────────────────────────────────────────────
+
+def _send_due_reminders():
+    db = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        due = (
+            db.query(Reminder)
+            .filter(Reminder.remind_at <= now, Reminder.sent == False)  # noqa: E712
+            .all()
+        )
+        for reminder in due:
+            sub = db.query(PushSubscription).filter_by(id=reminder.subscription_id).first()
+            event = db.query(Event).filter_by(id=reminder.event_id).first()
+            if sub and event:
+                parts = []
+                if event.event_date:
+                    parts.append(f"{event.event_date.day} {event.event_date.strftime('%B')}")
+                if event.location:
+                    parts.append(event.location)
+                try:
+                    webpush(
+                        subscription_info={
+                            "endpoint": sub.endpoint,
+                            "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
+                        },
+                        data=json.dumps({
+                            "title": f"Herinnering: {event.title}",
+                            "body": " — ".join(parts) if parts else "",
+                            "url": f"/#/events/{event.id}",
+                        }),
+                        vapid_private_key=VAPID_PRIVATE_KEY,
+                        vapid_claims={"sub": VAPID_CONTACT},
+                    )
+                except WebPushException as exc:
+                    print(f"[EventView] Push failed for reminder {reminder.id}: {exc}")
+            reminder.sent = True
+        db.commit()
+    except Exception as exc:
+        print(f"[EventView] _send_due_reminders error: {exc}")
+        db.rollback()
+    finally:
+        db.close()
+
+
+_scheduler = BackgroundScheduler()
+_scheduler.add_job(_send_due_reminders, "interval", minutes=1)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    _scheduler.start()
+    yield
+    _scheduler.shutdown()
+
+
+app = FastAPI(title="EventView API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -85,6 +189,29 @@ class ScrapingLogOut(BaseModel):
     events_found: int
     events_new: int
     error_message: str | None
+
+    class Config:
+        from_attributes = True
+
+
+class PushSubscriptionData(BaseModel):
+    endpoint: str
+    p256dh: str
+    auth: str
+
+
+class ReminderIn(BaseModel):
+    event_id: int
+    remind_at: datetime
+    subscription: PushSubscriptionData
+
+
+class ReminderOut(BaseModel):
+    id: int
+    event_id: int
+    remind_at: datetime
+    sent: bool
+    created_at: datetime
 
     class Config:
         from_attributes = True
@@ -318,12 +445,93 @@ def trigger_scrape(source_name: str):
     return result
 
 
+# ── Push notification routes ──────────────────────────────────────────
+
+@app.get("/api/push/vapid-key")
+def get_vapid_key():
+    return {"public_key": VAPID_PUBLIC_KEY}
+
+
+@app.get("/api/reminders", response_model=list[ReminderOut])
+def list_reminders():
+    db = SessionLocal()
+    try:
+        return (
+            db.query(Reminder)
+            .filter(Reminder.sent == False)  # noqa: E712
+            .all()
+        )
+    finally:
+        db.close()
+
+
+@app.post("/api/reminders", response_model=ReminderOut)
+def create_reminder(body: ReminderIn):
+    db = SessionLocal()
+    try:
+        if not db.query(Event).filter(Event.id == body.event_id).first():
+            raise HTTPException(status_code=404, detail="Event not found")
+
+        sub = db.query(PushSubscription).filter_by(endpoint=body.subscription.endpoint).first()
+        if sub:
+            sub.p256dh = body.subscription.p256dh
+            sub.auth = body.subscription.auth
+        else:
+            sub = PushSubscription(
+                endpoint=body.subscription.endpoint,
+                p256dh=body.subscription.p256dh,
+                auth=body.subscription.auth,
+            )
+            db.add(sub)
+            db.flush()
+
+        reminder = db.query(Reminder).filter_by(event_id=body.event_id).first()
+        if reminder:
+            reminder.subscription_id = sub.id
+            reminder.remind_at = body.remind_at
+            reminder.sent = False
+        else:
+            reminder = Reminder(
+                event_id=body.event_id,
+                subscription_id=sub.id,
+                remind_at=body.remind_at,
+            )
+            db.add(reminder)
+
+        db.commit()
+        db.refresh(reminder)
+        return reminder
+    finally:
+        db.close()
+
+
+@app.delete("/api/reminders/{reminder_id}")
+def delete_reminder(reminder_id: int):
+    db = SessionLocal()
+    try:
+        reminder = db.query(Reminder).filter(Reminder.id == reminder_id).first()
+        if not reminder:
+            raise HTTPException(status_code=404, detail="Reminder not found")
+        db.delete(reminder)
+        db.commit()
+        return {"ok": True}
+    finally:
+        db.close()
+
+
 # ── Serve Vue frontend (if built) ─────────────────────────────────────
 
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "EventView.UI", "dist")
 
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIR, "assets")), name="assets")
+
+    @app.get("/sw.js", include_in_schema=False)
+    def serve_sw():
+        sw_path = os.path.join(FRONTEND_DIR, "sw.js")
+        if os.path.isfile(sw_path):
+            return FileResponse(sw_path, media_type="application/javascript")
+        raise HTTPException(status_code=404, detail="sw.js not found")
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def serve_spa(full_path: str):
@@ -334,6 +542,4 @@ if os.path.isdir(FRONTEND_DIR):
 
 if __name__ == "__main__":
     import uvicorn
-
-    init_db()
     uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)

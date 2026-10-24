@@ -2,7 +2,11 @@ import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-DATABASE_URL = f"sqlite:///{os.path.join(BASE_DIR, 'events.db')}"
+# Overridable so Docker can point this at a mounted volume (e.g. /data)
+# that survives container rebuilds; defaults to the old Pi behaviour.
+DATA_DIR = os.environ.get("EVENTVIEW_DATA_DIR", BASE_DIR)
+
+DATABASE_URL = f"sqlite:///{os.path.join(DATA_DIR, 'events.db')}"
 
 REQUEST_TIMEOUT = 15  # seconds
 REQUEST_DELAY = 1.0   # seconds between requests
