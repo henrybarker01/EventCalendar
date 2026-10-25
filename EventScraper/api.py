@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import desc
+from sqlalchemy import desc, or_
 from apscheduler.schedulers.background import BackgroundScheduler
 from pywebpush import webpush, WebPushException
 
@@ -239,7 +239,8 @@ def list_events(
         if event_type:
             q = q.filter(Event.event_type == event_type)
         if from_date:
-            q = q.filter(Event.event_date >= from_date)
+            # Multi-day events still running on from_date count too.
+            q = q.filter(or_(Event.event_date >= from_date, Event.end_date >= from_date))
         if to_date:
             q = q.filter(Event.event_date <= to_date)
         events = q.order_by(Event.event_date).offset(offset).limit(limit).all()

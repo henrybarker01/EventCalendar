@@ -69,7 +69,7 @@ function proxyUrl(url: string) {
       <h2>{{ event.title }}</h2>
 
       <div class="event-detail-meta">
-        <span v-if="event.event_date">🗓️ {{ formatDate(event.event_date) }}</span>
+        <span v-if="event.event_date">🗓️ {{ formatDate(event.event_date) }}<template v-if="event.end_date && event.end_date !== event.event_date"> t/m {{ formatDate(event.end_date) }}</template></span>
         <span v-if="event.location">📍 {{ event.location }}</span>
         <span v-if="event.price">💶 {{ event.price }}</span>
       </div>

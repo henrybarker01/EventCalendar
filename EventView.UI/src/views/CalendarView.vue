@@ -6,15 +6,12 @@ import { useEventsStore } from '../stores/events'
 import { useBookmarksStore } from '../stores/bookmarks'
 import { useCustomEventsStore } from '../stores/customEvents'
 import type { Event } from '../api/client'
+import { localDateStr } from '../utils/date'
 
 const router = useRouter()
 const eventsStore = useEventsStore()
 const bookmarksStore = useBookmarksStore()
 const customEventsStore = useCustomEventsStore()
-
-function localDateStr(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
 
 const today = new Date()
 const todayStr = localDateStr(today)
@@ -188,8 +185,11 @@ function formatDayLabel(dateStr: string) {
   })
 }
 
+// The store loads events from today on; ask for the earlier days on screen too.
+watch(() => gridCells.value[0].dateStr, from => eventsStore.loadFrom(from))
+
 onMounted(async () => {
-  if (!eventsStore.hasFetched) eventsStore.fetchEvents()
+  eventsStore.loadFrom(gridCells.value[0].dateStr)
   await customEventsStore.load()
 })
 </script>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import type { Event } from '../api/client'
 import { useBookmarksStore } from '../stores/bookmarks'
@@ -65,6 +65,14 @@ function formatDate(d: string) {
   return new Date(d).toLocaleDateString('nl-NL', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })
 }
 
+// Multi-day events show their range, so one that's already running doesn't look past.
+const dateLabel = computed(() => {
+  const start = props.displayDate ?? props.event.event_date
+  if (!start) return null
+  const end = props.event.end_date
+  return end && end !== start ? `${formatDate(start)} t/m ${formatDate(end)}` : formatDate(start)
+})
+
 function proxyUrl(url: string) {
   return `/api/image-proxy?url=${encodeURIComponent(url)}`
 }
@@ -96,7 +104,7 @@ function proxyUrl(url: string) {
         <span v-for="cat in event.category.split(',')" :key="cat" class="badge">{{ cat.trim() }}</span>
       </div>
       <p class="event-card-title">{{ event.title }}</p>
-      <p v-if="displayDate || event.event_date" class="event-card-date">{{ formatDate(displayDate ?? event.event_date!) }}</p>
+      <p v-if="dateLabel" class="event-card-date">{{ dateLabel }}</p>
       <p v-if="event.location" class="event-card-location">📍 {{ event.location }}</p>
       <p v-if="event.description" class="event-card-desc">{{ event.description }}</p>
     </div>

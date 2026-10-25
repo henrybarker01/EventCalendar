@@ -59,7 +59,7 @@ EventView/
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/events` | List events. Query params: `source`, `from_date`, `to_date`, `active_only`, `limit`, `offset` |
+| GET | `/api/events` | List events. Query params: `source`, `from_date` (also matches events still running, i.e. `end_date >= from_date`), `to_date`, `active_only`, `limit`, `offset`. The UI always sends `from_date` (today, or the calendar's first visible day) so past rows can't fill the limit |
 | GET | `/api/events/{id}` | Single event |
 | GET | `/api/sources` | List of registered source names |
 | GET | `/api/logs` | Recent scraping run history |

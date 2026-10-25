@@ -4,6 +4,7 @@ import { useEventsStore } from '../stores/events'
 import { useBookmarksStore } from '../stores/bookmarks'
 import { useCustomEventsStore } from '../stores/customEvents'
 import { useHiddenStore } from '../stores/hidden'
+import { localDateStr } from '../utils/date'
 import EventCard from '../components/EventCard.vue'
 
 const store = useEventsStore()
@@ -20,15 +21,13 @@ const hiddenEvents = computed(() =>
 )
 const activeTab = ref<'events' | 'attractions' | 'booked'>('events')
 
-function localDateStr(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
 const todayStr = localDateStr(new Date())
 
 // Hide past events unless the user has explicitly set a from-date filter.
+// Multi-day events stay until their last day.
 const filteredEvents = computed(() => {
   if (store.fromDate) return store.filtered
-  return store.filtered.filter(e => !e.event_date || e.event_date >= todayStr)
+  return store.filtered.filter(e => !e.event_date || (e.end_date ?? e.event_date) >= todayStr)
 })
 
 // Attractions have no from_date filter in the API, so always hide past ones.
@@ -46,7 +45,7 @@ const bookedUpcoming = computed(() => {
         ? bookmarksStore.getChosenDate(e.id)
         : e.event_date,
     }))
-    .filter(x => x.date && x.date >= todayStr)
+    .filter(x => x.date && (x.event.end_date ?? x.date) >= todayStr)
     .sort((a, b) => (a.date! > b.date! ? 1 : -1))
 })
 
