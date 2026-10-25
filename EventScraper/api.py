@@ -22,6 +22,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from pywebpush import webpush, WebPushException
 
 from config import DATA_DIR
+from enrich import place_for, themes_for
 from models import (
     Event, Bookmark, CustomEvent, HiddenEvent, ScrapingLog,
     PushSubscription, Reminder,
@@ -152,9 +153,23 @@ class EventOut(BaseModel):
     is_bookmarked: bool = False
     bookmark_date: date | None = None
     is_hidden: bool = False
+    # Derived for the UI's filters (see enrich.py), not stored.
+    themes: list[str] = []
+    town: str | None = None
+    municipality: str | None = None
+    distance_km: float | None = None
 
     class Config:
         from_attributes = True
+
+
+def _event_out(e: Event) -> EventOut:
+    out = EventOut.model_validate(e)
+    out.themes = themes_for(e.title, e.category)
+    place = place_for(e.location, e.title, e.source_name)
+    if place:
+        out.town, out.municipality, out.distance_km = place
+    return out
 
 
 class BookmarkOut(BaseModel):
@@ -248,7 +263,7 @@ def list_events(
         hidden_set = {h.event_id for h in db.query(HiddenEvent).all()}
         result = []
         for e in events:
-            d = EventOut.model_validate(e)
+            d = _event_out(e)
             if e.id in bookmarks_map:
                 d.is_bookmarked = True
                 d.bookmark_date = bookmarks_map[e.id].chosen_date
@@ -267,7 +282,7 @@ def get_event(event_id: int):
         event = db.query(Event).filter(Event.id == event_id).first()
         if not event:
             raise HTTPException(status_code=404, detail="Event not found")
-        out = EventOut.model_validate(event)
+        out = _event_out(event)
         bookmark = db.query(Bookmark).filter_by(event_id=event_id).first()
         if bookmark:
             out.is_bookmarked = True
@@ -296,7 +311,7 @@ def list_bookmarks():
         bookmarks = db.query(Bookmark).order_by(Bookmark.created_at).all()
         result = []
         for b in bookmarks:
-            out = EventOut.model_validate(b.event)
+            out = _event_out(b.event)
             out.is_bookmarked = True
             out.bookmark_date = b.chosen_date
             result.append(out)

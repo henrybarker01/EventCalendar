@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { useEventsStore } from '../stores/events'
+import type { Event } from '../api/client'
+import { useEventsStore, DATE_PRESETS, type DatePreset } from '../stores/events'
 import { useBookmarksStore } from '../stores/bookmarks'
 import { useCustomEventsStore } from '../stores/customEvents'
 import { useHiddenStore } from '../stores/hidden'
 import { localDateStr } from '../utils/date'
 import EventCard from '../components/EventCard.vue'
+import EventFilters from '../components/EventFilters.vue'
 
 const store = useEventsStore()
 const bookmarksStore = useBookmarksStore()
@@ -25,15 +27,28 @@ const todayStr = localDateStr(new Date())
 
 // Hide past events unless the user has explicitly set a from-date filter.
 // Multi-day events stay until their last day.
-const filteredEvents = computed(() => {
-  if (store.fromDate) return store.filtered
-  return store.filtered.filter(e => !e.event_date || (e.end_date ?? e.event_date) >= todayStr)
-})
+const isUpcoming = (e: Event) => !!store.fromDate || !e.event_date || (e.end_date ?? e.event_date) >= todayStr
+
+const filteredEvents = computed(() => store.filtered.filter(isUpcoming))
 
 // Attractions have no from_date filter in the API, so always hide past ones.
 const filteredAttractions = computed(() =>
   store.filteredAttractions.filter(e => !e.event_date || e.event_date >= todayStr)
 )
+
+// What the theme chips count: the current tab's list before the theme filter.
+const themeBase = computed(() =>
+  activeTab.value === 'attractions' ? store.baseAttractions : store.baseEvents.filter(isUpcoming)
+)
+
+// A quick-date button and the from/to inputs replace each other.
+function togglePreset(preset: DatePreset) {
+  store.datePreset = store.datePreset === preset ? '' : preset
+  if (store.datePreset) {
+    store.fromDate = ''
+    store.toDate = ''
+  }
+}
 
 const bookedUpcoming = computed(() => {
   const all = [...store.events, ...store.attractions]
@@ -71,11 +86,15 @@ onMounted(() => {
 watch([() => store.selectedSource, () => store.fromDate, () => store.toDate], () => {
   store.fetchEvents()
 })
+
+watch([() => store.fromDate, () => store.toDate], ([from, to]) => {
+  if (from || to) store.datePreset = ''
+})
 </script>
 
 <template>
-  <div class="filter-bar">
-    <input v-model="store.search" type="search" placeholder="Zoeken..." />
+  <!-- Filters don't apply to Gepland: your plans always show. -->
+  <EventFilters v-if="activeTab !== 'booked'" :items="themeBase">
     <select v-model="store.selectedSource">
       <option value="">Alle bronnen</option>
       <option v-for="s in store.sources" :key="s" :value="s">{{ s }}</option>
@@ -83,8 +102,17 @@ watch([() => store.selectedSource, () => store.fromDate, () => store.toDate], ()
     <template v-if="activeTab === 'events'">
       <input v-model="store.fromDate" type="date" title="Vanaf" />
       <input v-model="store.toDate" type="date" title="Tot" />
+      <div class="chip-row">
+        <button
+          v-for="p in DATE_PRESETS"
+          :key="p.value"
+          class="filter-chip"
+          :class="{ active: store.datePreset === p.value }"
+          @click="togglePreset(p.value)"
+        >{{ p.label }}</button>
+      </div>
     </template>
-  </div>
+  </EventFilters>
 
   <div class="tab-bar">
     <button class="tab-btn" :class="{ active: activeTab === 'events' }" @click="activeTab = 'events'">

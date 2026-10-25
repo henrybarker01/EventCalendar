@@ -19,6 +19,11 @@ export interface Event {
   is_bookmarked: boolean
   bookmark_date: string | null
   is_hidden: boolean
+  // Derived by the API for filtering (EventScraper/enrich.py)
+  themes: string[]
+  town: string | null
+  municipality: string | null
+  distance_km: number | null
 }
 
 export interface CustomEvent {

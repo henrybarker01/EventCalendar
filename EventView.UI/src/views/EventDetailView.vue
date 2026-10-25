@@ -70,7 +70,7 @@ function proxyUrl(url: string) {
 
       <div class="event-detail-meta">
         <span v-if="event.event_date">🗓️ {{ formatDate(event.event_date) }}<template v-if="event.end_date && event.end_date !== event.event_date"> t/m {{ formatDate(event.end_date) }}</template></span>
-        <span v-if="event.location">📍 {{ event.location }}</span>
+        <span v-if="event.location">📍 {{ event.location }}<template v-if="event.distance_km !== null && event.distance_km >= 1"> · {{ Math.round(event.distance_km) }} km van Barneveld</template></span>
         <span v-if="event.price">💶 {{ event.price }}</span>
       </div>
 

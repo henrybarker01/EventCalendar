@@ -73,6 +73,19 @@ const dateLabel = computed(() => {
   return end && end !== start ? `${formatDate(start)} t/m ${formatDate(end)}` : formatDate(start)
 })
 
+// Themes match the filter chips; the source's own tags are the fallback.
+const badges = computed(() =>
+  props.event.themes.length
+    ? props.event.themes
+    : (props.event.category ?? '').split(',').map(c => c.trim()).filter(Boolean)
+)
+
+// Only next to a real location, and not for events in Barneveld itself.
+const distanceLabel = computed(() => {
+  const km = props.event.distance_km
+  return props.event.location && km !== null && km >= 1 ? `${Math.round(km)} km` : null
+})
+
 function proxyUrl(url: string) {
   return `/api/image-proxy?url=${encodeURIComponent(url)}`
 }
@@ -100,12 +113,12 @@ function proxyUrl(url: string) {
     <img v-if="event.image_url" :src="proxyUrl(event.image_url)" :alt="event.title" class="event-card-img" loading="lazy" />
     <div v-else class="event-card-img-placeholder">🗓️</div>
     <div class="event-card-body">
-      <div v-if="event.category" class="badge-row">
-        <span v-for="cat in event.category.split(',')" :key="cat" class="badge">{{ cat.trim() }}</span>
+      <div v-if="badges.length" class="badge-row">
+        <span v-for="b in badges" :key="b" class="badge">{{ b }}</span>
       </div>
       <p class="event-card-title">{{ event.title }}</p>
       <p v-if="dateLabel" class="event-card-date">{{ dateLabel }}</p>
-      <p v-if="event.location" class="event-card-location">📍 {{ event.location }}</p>
+      <p v-if="event.location" class="event-card-location">📍 {{ event.location }}<template v-if="distanceLabel"> · {{ distanceLabel }}</template></p>
       <p v-if="event.description" class="event-card-desc">{{ event.description }}</p>
     </div>
   </article>

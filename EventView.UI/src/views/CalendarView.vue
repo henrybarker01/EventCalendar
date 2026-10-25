@@ -7,6 +7,7 @@ import { useBookmarksStore } from '../stores/bookmarks'
 import { useCustomEventsStore } from '../stores/customEvents'
 import type { Event } from '../api/client'
 import { localDateStr } from '../utils/date'
+import EventFilters from '../components/EventFilters.vue'
 
 const router = useRouter()
 const eventsStore = useEventsStore()
@@ -64,9 +65,14 @@ function displayDate(e: Event): string | null {
   return e.event_date
 }
 
+// What the theme chips count: loaded events before the theme filter.
+const calendarBase = computed(() => eventsStore.events.filter(eventsStore.passesBase))
+
+// The filters apply here too, but planned (starred) events always show.
 const eventsByDate = computed(() => {
   const map: Record<string, Event[]> = {}
   for (const e of [...eventsStore.events, ...eventsStore.attractions]) {
+    if (!bookmarksStore.isBookmarked(e.id) && !(eventsStore.passesBase(e) && eventsStore.hasSelectedTheme(e))) continue
     const d = displayDate(e)
     if (!d) continue
     if (!map[d]) map[d] = []
@@ -224,6 +230,8 @@ onMounted(async () => {
     <p v-else class="status-msg" style="padding:1rem 0 1.5rem">
       Klik op + op een dag om iets toe te voegen, of ster bij een evenement.
     </p>
+
+    <EventFilters :items="calendarBase" />
 
     <!-- Month navigation + filter -->
     <div class="calendar-header">

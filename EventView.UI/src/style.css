@@ -109,6 +109,39 @@ a { color: inherit; text-decoration: none; }
 .filter-bar select:focus { border-color: var(--c-primary); }
 .filter-bar input[type="search"] { flex: 1; min-width: 180px; }
 
+/* Quick-date and theme chips, each on a line of their own inside the filter bar */
+.chip-row {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+}
+.filter-chip {
+  border: 1px solid var(--c-border);
+  border-radius: 99px;
+  background: var(--c-surface);
+  color: var(--c-muted);
+  font-size: .82rem;
+  font-weight: 500;
+  padding: .3rem .8rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all .15s;
+}
+.filter-chip:hover { border-color: var(--c-primary); color: var(--c-primary); }
+.filter-chip.active { background: var(--c-primary); color: #fff; border-color: var(--c-primary); }
+.filter-chip-count { font-size: .72rem; opacity: .75; margin-left: .15rem; }
+.filter-chip-clear {
+  border: none;
+  background: none;
+  color: var(--c-primary);
+  font-size: .82rem;
+  cursor: pointer;
+  padding: .3rem .4rem;
+  white-space: nowrap;
+}
+.filter-chip-clear:hover { text-decoration: underline; }
+
 .tab-bar {
   display: flex;
   gap: .5rem;
@@ -496,6 +529,13 @@ a { color: inherit; text-decoration: none; }
 .cal-more:hover { text-decoration: underline; }
 
 @media (max-width: 640px) {
+  /* One swipeable line per chip row instead of several wrapped lines */
+  .chip-row { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .chip-row::-webkit-scrollbar { display: none; }
+  /* Dropdowns and date fields two per line */
+  .filter-bar select,
+  .filter-bar input[type="date"] { flex: 1 1 calc(50% - .4rem); min-width: 0; }
+
   .tab-btn { padding: .5rem .35rem; font-size: .82rem; }
   .tab-count { font-size: .66rem; padding: .08rem .3rem; }
 
