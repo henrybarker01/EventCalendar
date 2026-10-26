@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onActivated, onMounted, watch } from 'vue'
 import type { Event } from '../api/client'
 import { useEventsStore, DATE_PRESETS, type DatePreset } from '../stores/events'
 import { useBookmarksStore } from '../stores/bookmarks'
@@ -83,6 +83,9 @@ onMounted(() => {
   customEventsStore.load()
 })
 
+// Kept alive between visits (see App.vue): only refresh data that has gone stale.
+onActivated(() => store.refreshIfStale())
+
 watch([() => store.selectedSource, () => store.fromDate, () => store.toDate], () => {
   store.fetchEvents()
 })
@@ -129,8 +132,9 @@ watch([() => store.fromDate, () => store.toDate], ([from, to]) => {
     </button>
   </div>
 
-  <p v-if="store.loading" class="status-msg">Laden...</p>
-  <p v-else-if="store.error" class="status-msg">⚠️ {{ store.error }}</p>
+  <!-- A refresh keeps the current list on screen, so the scroll position survives. -->
+  <p v-if="store.loading && !store.hasFetched" class="status-msg">Laden...</p>
+  <p v-else-if="store.error && !store.hasFetched" class="status-msg">⚠️ {{ store.error }}</p>
   <template v-else>
     <template v-if="activeTab === 'events'">
       <p v-if="filteredEvents.length === 0" class="status-msg">Geen evenementen gevonden.</p>

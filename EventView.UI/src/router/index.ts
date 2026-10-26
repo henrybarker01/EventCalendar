@@ -10,5 +10,6 @@ export default createRouter({
     { path: '/events/:id', component: EventDetailView, props: true },
     { path: '/kalender', component: CalendarView },
   ],
-  scrollBehavior: () => ({ top: 0 }),
+  // Back/forward returns to where you were; anything else starts at the top.
+  scrollBehavior: (_to, _from, savedPosition) => savedPosition ?? { top: 0 },
 })

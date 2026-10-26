@@ -26,6 +26,13 @@ onMounted(async () => {
   }
 })
 
+// Back to the list at the same spot; opened from a shared link there's no
+// in-app page to return to, so open the agenda instead of leaving the app.
+function goBack() {
+  if (window.history.state?.back) router.back()
+  else router.push('/')
+}
+
 function handleBookmarkClick() {
   if (!event.value) return
   if (bookmarksStore.isBookmarked(event.value.id)) {
@@ -55,7 +62,7 @@ function proxyUrl(url: string) {
 
 <template>
   <div class="event-detail">
-    <a class="back-link" href="#" @click.prevent="router.back()">← Terug</a>
+    <a class="back-link" href="#" @click.prevent="goBack">← Terug</a>
 
     <p v-if="loading" class="status-msg">Laden...</p>
     <p v-else-if="error" class="status-msg">⚠️ {{ error }}</p>

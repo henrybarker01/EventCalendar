@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onActivated, onMounted } from 'vue'
 import 'emoji-picker-element'
 import { useRouter } from 'vue-router'
 import { useEventsStore } from '../stores/events'
@@ -198,6 +198,9 @@ onMounted(async () => {
   eventsStore.loadFrom(gridCells.value[0].dateStr)
   await customEventsStore.load()
 })
+
+// Kept alive between visits (see App.vue): only refresh data that has gone stale.
+onActivated(() => eventsStore.refreshIfStale())
 </script>
 
 <template>
@@ -244,7 +247,7 @@ onMounted(async () => {
       <button class="cal-filter-btn" :class="{ active: calFilter === 'planned' }" @click="calFilter = 'planned'">Alleen gepland</button>
     </div>
 
-    <p v-if="eventsStore.loading" class="status-msg">Laden...</p>
+    <p v-if="eventsStore.loading && !eventsStore.hasFetched" class="status-msg">Laden...</p>
 
     <!-- Calendar grid -->
     <div v-else class="calendar-grid">

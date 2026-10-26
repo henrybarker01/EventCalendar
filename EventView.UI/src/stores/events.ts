@@ -90,6 +90,7 @@ export const useEventsStore = defineStore('events', () => {
   // ones. The calendar moves it back when it shows earlier days.
   const loadedFrom = ref<string>(localDateStr(new Date()))
   let latestRequest = 0
+  let fetchedAt = 0
 
   // Hidden, search and distance. Theme chip counts are based on this, so they
   // show what each theme would add.
@@ -139,6 +140,7 @@ export const useEventsStore = defineStore('events', () => {
       events.value = evts
       attractions.value = attrs
       hasFetched.value = true
+      fetchedAt = Date.now()
       const all = [...evts, ...attrs]
       useBookmarksStore().initFromEvents(all)
       useHiddenStore().initFromEvents(all)
@@ -157,6 +159,12 @@ export const useEventsStore = defineStore('events', () => {
     if (!hasFetched.value || (extend && !fromDate.value)) await fetchEvents()
   }
 
+  // The list views stay alive between visits (KeepAlive), so they refresh old
+  // data when shown again. The current list stays on screen meanwhile.
+  function refreshIfStale(maxAgeMs = 10 * 60 * 1000) {
+    if (hasFetched.value && !loading.value && Date.now() - fetchedAt > maxAgeMs) fetchEvents()
+  }
+
   async function fetchSources() {
     sources.value = await api.getSources()
   }
@@ -165,6 +173,6 @@ export const useEventsStore = defineStore('events', () => {
     events, attractions, sources, loading, error, hasFetched,
     baseEvents, baseAttractions, filtered, filteredAttractions,
     selectedSource, fromDate, toDate, search, datePreset, themes, distance,
-    passesBase, hasSelectedTheme, toggleTheme, fetchEvents, loadFrom, fetchSources,
+    passesBase, hasSelectedTheme, toggleTheme, fetchEvents, loadFrom, refreshIfStale, fetchSources,
   }
 })

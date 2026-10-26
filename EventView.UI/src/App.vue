@@ -34,6 +34,12 @@ async function enableNotifications() {
   </div>
 
   <main class="container">
-    <RouterView />
+    <!-- The list views stay alive while an event is open, so going back
+         returns to the same tab, month and scroll position. -->
+    <RouterView v-slot="{ Component }">
+      <KeepAlive :include="['EventsView', 'CalendarView']">
+        <component :is="Component" />
+      </KeepAlive>
+    </RouterView>
   </main>
 </template>

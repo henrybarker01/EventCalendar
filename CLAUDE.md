@@ -58,6 +58,7 @@ EventView/
 - **Single uvicorn worker only** — the reminder scheduler (APScheduler `BackgroundScheduler`, polling every minute inside `api.py`) runs in-process. Multiple workers would each run their own scheduler and send duplicate push notifications.
 - **Themes and distance are derived, not stored** — `enrich.py` maps each source's tags plus title keywords onto a fixed set of themes, and the location's town onto `TOWNS` (centroids from PDOK Locatieserver) for a distance from Barneveld. `/api/events` returns them as `themes`, `town`, `municipality`, `distance_km`, so changing the rules updates old events without re-scraping. Events in a town missing from `TOWNS` have no distance and drop out when a distance filter is on.
 - **Hash routing** in Vue (`createWebHashHistory`) so FastAPI's catch-all route serves `index.html` for all `/#/...` paths without conflicts.
+- **List views are kept alive** — `App.vue` wraps the router view in `<KeepAlive>` for `EventsView` and `CalendarView` (matched by file name), and the router restores the saved scroll position on back/forward. Opening an event and going back returns to the same tab, month and scroll position. The views refresh data older than 10 minutes when shown again (`refreshIfStale`), keeping the list on screen meanwhile. A new list-style view needs adding to that `include` list.
 
 ## API endpoints
 
