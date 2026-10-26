@@ -270,7 +270,7 @@ a { color: inherit; text-decoration: none; }
 }
 .btn:hover { background: var(--c-primary-dark); }
 
-/* ── Bookmark button ──────────────────────────────────── */
+/* ── Card buttons: ✕ hide, 🔔 reminder, ☆ star ─────────── */
 .reminder-btn {
   position: absolute;
   top: .5rem;
@@ -289,13 +289,11 @@ a { color: inherit; text-decoration: none; }
   align-items: center;
   justify-content: center;
   opacity: 0;
-  transition: background .15s, transform .15s, opacity .15s;
+  filter: grayscale(1); /* grey like the ☆ until a reminder is set */
+  transition: background .15s, transform .15s, opacity .15s, filter .15s;
   box-shadow: 0 1px 4px rgba(0,0,0,.15);
 }
-.event-card:hover .reminder-btn,
-.reminder-btn.has-reminder { opacity: 1; }
-.reminder-btn:hover { background: #fff; transform: scale(1.12); }
-.reminder-btn.has-reminder { background: #fef3c7; }
+.reminder-btn.has-reminder { opacity: 1; filter: none; }
 
 .bookmark-btn {
   position: absolute;
@@ -318,8 +316,6 @@ a { color: inherit; text-decoration: none; }
   transition: background .15s, color .15s, transform .15s;
   box-shadow: 0 1px 4px rgba(0,0,0,.15);
 }
-.bookmark-btn:hover { background: #fff; color: var(--c-primary); transform: scale(1.12); }
-.bookmark-btn.is-bookmarked { background: var(--c-primary); color: #fff; }
 
 .hide-btn {
   position: absolute;
@@ -342,8 +338,28 @@ a { color: inherit; text-decoration: none; }
   transition: opacity .15s, background .15s, color .15s;
   box-shadow: 0 1px 4px rgba(0,0,0,.1);
 }
-.event-card:hover .hide-btn { opacity: 1; }
-.hide-btn:hover { background: #fee2e2; color: #dc2626; }
+
+/* Hovering reveals the bell and ✕ and lifts the buttons, but only with a
+   mouse: on a touch screen a tap leaves :hover stuck on the tapped card. */
+@media (hover: hover) {
+  .event-card:hover .reminder-btn,
+  .event-card:hover .hide-btn { opacity: 1; }
+  .reminder-btn:hover { background: #fff; transform: scale(1.12); filter: none; }
+  .bookmark-btn:hover { background: #fff; color: var(--c-primary); transform: scale(1.12); }
+  .hide-btn:hover { background: #fee2e2; color: #dc2626; }
+}
+
+/* Touch screens can't hover: always show them, with a thumb's width
+   between the bell and the star. */
+@media (hover: none) {
+  .reminder-btn,
+  .hide-btn { opacity: 1; }
+  .reminder-btn { right: calc(.5rem + 44px); }
+}
+
+/* States last, so they win over hover */
+.reminder-btn.has-reminder { background: #fef3c7; }
+.bookmark-btn.is-bookmarked { background: var(--c-primary); color: #fff; }
 
 .event-card-title { margin: 0; }
 
