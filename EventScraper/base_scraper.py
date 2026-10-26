@@ -21,7 +21,7 @@ EARTH_RADIUS_KM = 6371.0
 # A run that lists fewer than this share of the upcoming events we hold for its
 # source looks broken (site redesign, blocked request) rather than like a wave
 # of cancellations, so nothing is retired after it.
-MIN_LISTED_SHARE = 0.3
+MIN_LISTED_SHARE = 0.5
 
 
 def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
