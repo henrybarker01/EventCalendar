@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import desc, or_
 from apscheduler.schedulers.background import BackgroundScheduler
+from py_vapid import Vapid
 from pywebpush import webpush, WebPushException
 
 from config import DATA_DIR
@@ -66,6 +67,10 @@ def _load_or_generate_vapid_keys():
 
 
 VAPID_PRIVATE_KEY, VAPID_PUBLIC_KEY = _load_or_generate_vapid_keys()
+# webpush() reads a key passed as text with Vapid.from_string, which can't
+# parse the PEM stored above (every push failed with "Could not deserialize
+# key data"), so hand it the parsed key instead.
+VAPID = Vapid.from_pem(VAPID_PRIVATE_KEY.encode())
 
 
 # ── Reminder scheduler ────────────────────────────────────────────────
@@ -96,7 +101,7 @@ def _push(db, sub: PushSubscription, payload: dict) -> bool:
         webpush(
             subscription_info={"endpoint": sub.endpoint, "keys": {"p256dh": sub.p256dh, "auth": sub.auth}},
             data=json.dumps(payload),
-            vapid_private_key=VAPID_PRIVATE_KEY,
+            vapid_private_key=VAPID,
             vapid_claims={"sub": VAPID_CONTACT},
         )
         return True
@@ -107,31 +112,43 @@ def _push(db, sub: PushSubscription, payload: dict) -> bool:
         return False
 
 
-def _send_due_reminders():
-    """Manual 🔔 reminders: one device, a chosen time."""
+def _push_all(db, subs: list[PushSubscription], payload: dict) -> tuple[bool, list[PushSubscription]]:
+    """Send to every device: (did at least one get it, the devices still registered)."""
+    delivered = False
+    for sub in subs:
+        delivered = _push(db, sub, payload) or delivered
+    return delivered, [s for s in subs if s not in db.deleted]
+
+
+def _send_due_reminders(now: datetime | None = None):
+    """Manual 🔔 reminders at a chosen time, sent to every registered device
+    like the automatic ones. Retried each minute until a device gets one, for
+    up to PLAN_REMINDER_MAX_DELAY."""
+    now = now or datetime.utcnow()  # naive UTC, like remind_at
     db = SessionLocal()
     try:
-        now = datetime.utcnow()
         due = (
             db.query(Reminder)
             .filter(Reminder.remind_at <= now, Reminder.sent == False)  # noqa: E712
             .all()
         )
+        subs = db.query(PushSubscription).all() if due else []
         for reminder in due:
-            sub = db.query(PushSubscription).filter_by(id=reminder.subscription_id).first()
             event = db.query(Event).filter_by(id=reminder.event_id).first()
-            if sub and event:
+            delivered = False
+            if event:
                 parts = []
                 if event.event_date:
                     parts.append(_nl_date(event.event_date))
                 if event.location:
                     parts.append(event.location)
-                _push(db, sub, {
+                delivered, subs = _push_all(db, subs, {
                     "title": f"Herinnering: {event.title}",
                     "body": " — ".join(parts),
                     "url": f"/#/events/{event.id}",
                 })
-            reminder.sent = True
+            if delivered or not event or now - reminder.remind_at > PLAN_REMINDER_MAX_DELAY:
+                reminder.sent = True
         db.commit()
     except Exception as exc:
         print(f"[EventView] _send_due_reminders error: {exc}")
@@ -162,7 +179,8 @@ def _planned_items(db) -> list[dict]:
 def _send_plan_reminders(now: datetime | None = None):
     """Automatic reminders for everything planned, sent to every subscribed
     device. Only reminder times after the item was planned count, so starring
-    something for tomorrow doesn't fire its "5 days before" straight away."""
+    something for tomorrow doesn't fire its "5 days before" straight away.
+    One no device received is retried each minute while still in time."""
     now = now or datetime.utcnow()  # naive UTC, like the created_at columns
     db = SessionLocal()
     try:
@@ -179,10 +197,11 @@ def _send_plan_reminders(now: datetime | None = None):
                 if db.query(PlanReminderSent).filter_by(**key).first():
                     continue
                 body = " · ".join(p for p in (_nl_date(item["day"]), item["where"]) if p)
-                for sub in subs:
-                    _push(db, sub, {"title": f"{prefix}: {item['title']}", "body": body, "url": item["url"]})
-                subs = [s for s in subs if s not in db.deleted]
-                db.add(PlanReminderSent(**key))
+                delivered, subs = _push_all(db, subs, {
+                    "title": f"{prefix}: {item['title']}", "body": body, "url": item["url"],
+                })
+                if delivered:
+                    db.add(PlanReminderSent(**key))
                 db.commit()
     except Exception as exc:
         print(f"[EventView] _send_plan_reminders error: {exc}")
