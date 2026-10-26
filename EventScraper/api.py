@@ -9,7 +9,8 @@ FastAPI server — serves the REST API and (optionally) the Vue frontend.
 import json
 import os
 from contextlib import asynccontextmanager
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import FastAPI, Query, HTTPException
@@ -25,7 +26,7 @@ from config import DATA_DIR
 from enrich import place_for, themes_for
 from models import (
     Event, Bookmark, CustomEvent, HiddenEvent, ScrapingLog,
-    PushSubscription, Reminder,
+    PushSubscription, Reminder, PlanReminderSent,
     SessionLocal, init_db,
 )
 
@@ -69,7 +70,45 @@ VAPID_PRIVATE_KEY, VAPID_PUBLIC_KEY = _load_or_generate_vapid_keys()
 
 # ── Reminder scheduler ────────────────────────────────────────────────
 
+LOCAL_TZ = ZoneInfo("Europe/Amsterdam")
+NL_WEEKDAYS = ["ma", "di", "wo", "do", "vr", "za", "zo"]
+NL_MONTHS = [
+    "januari", "februari", "maart", "april", "mei", "juni",
+    "juli", "augustus", "september", "oktober", "november", "december",
+]
+
+# Automatic reminders for everything planned (starred events and own calendar
+# items): (days before, title prefix), each at PLAN_REMINDER_TIME local time.
+PLAN_REMINDERS = [(5, "Over 5 dagen"), (1, "Morgen")]
+PLAN_REMINDER_TIME = time(19, 0)
+# A reminder running later than this (e.g. the server was down) is skipped.
+PLAN_REMINDER_MAX_DELAY = timedelta(hours=3)
+
+
+def _nl_date(d: date) -> str:
+    return f"{NL_WEEKDAYS[d.weekday()]} {d.day} {NL_MONTHS[d.month - 1]}"
+
+
+def _push(db, sub: PushSubscription, payload: dict) -> bool:
+    """Send one notification. A subscription the push service reports as gone
+    (permission revoked, browser data cleared) is deleted."""
+    try:
+        webpush(
+            subscription_info={"endpoint": sub.endpoint, "keys": {"p256dh": sub.p256dh, "auth": sub.auth}},
+            data=json.dumps(payload),
+            vapid_private_key=VAPID_PRIVATE_KEY,
+            vapid_claims={"sub": VAPID_CONTACT},
+        )
+        return True
+    except Exception as exc:  # also network errors: one device mustn't block the others
+        if isinstance(exc, WebPushException) and getattr(exc.response, "status_code", None) in (404, 410):
+            db.delete(sub)
+        print(f"[EventView] Push to subscription {sub.id} failed: {exc}")
+        return False
+
+
 def _send_due_reminders():
+    """Manual 🔔 reminders: one device, a chosen time."""
     db = SessionLocal()
     try:
         now = datetime.utcnow()
@@ -84,25 +123,14 @@ def _send_due_reminders():
             if sub and event:
                 parts = []
                 if event.event_date:
-                    parts.append(f"{event.event_date.day} {event.event_date.strftime('%B')}")
+                    parts.append(_nl_date(event.event_date))
                 if event.location:
                     parts.append(event.location)
-                try:
-                    webpush(
-                        subscription_info={
-                            "endpoint": sub.endpoint,
-                            "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
-                        },
-                        data=json.dumps({
-                            "title": f"Herinnering: {event.title}",
-                            "body": " — ".join(parts) if parts else "",
-                            "url": f"/#/events/{event.id}",
-                        }),
-                        vapid_private_key=VAPID_PRIVATE_KEY,
-                        vapid_claims={"sub": VAPID_CONTACT},
-                    )
-                except WebPushException as exc:
-                    print(f"[EventView] Push failed for reminder {reminder.id}: {exc}")
+                _push(db, sub, {
+                    "title": f"Herinnering: {event.title}",
+                    "body": " — ".join(parts),
+                    "url": f"/#/events/{event.id}",
+                })
             reminder.sent = True
         db.commit()
     except Exception as exc:
@@ -112,8 +140,60 @@ def _send_due_reminders():
         db.close()
 
 
+def _planned_items(db) -> list[dict]:
+    """Starred events and own calendar items, with the day they're planned for."""
+    items = []
+    for b in db.query(Bookmark).all():
+        e = b.event
+        day = b.chosen_date or e.event_date  # attractions: the day you picked
+        if not day:
+            continue
+        where = e.location or ""
+        if not e.is_active:
+            where = "⚠️ Niet meer in de agenda van de bron" + (f" · {where}" if where else "")
+        items.append({"key": f"event:{e.id}", "title": e.title, "day": day, "where": where,
+                      "url": f"/#/events/{e.id}", "planned_at": b.created_at})
+    for c in db.query(CustomEvent).all():
+        items.append({"key": f"custom:{c.id}", "title": c.title, "day": c.event_date, "where": "",
+                      "url": "/#/kalender", "planned_at": c.created_at})
+    return items
+
+
+def _send_plan_reminders(now: datetime | None = None):
+    """Automatic reminders for everything planned, sent to every subscribed
+    device. Only reminder times after the item was planned count, so starring
+    something for tomorrow doesn't fire its "5 days before" straight away."""
+    now = now or datetime.utcnow()  # naive UTC, like the created_at columns
+    db = SessionLocal()
+    try:
+        subs = db.query(PushSubscription).all()
+        if not subs:
+            return
+        for item in _planned_items(db):
+            for days, prefix in PLAN_REMINDERS:
+                at = (datetime.combine(item["day"] - timedelta(days=days), PLAN_REMINDER_TIME, LOCAL_TZ)
+                      .astimezone(timezone.utc).replace(tzinfo=None))
+                if not (item["planned_at"] < at <= now <= at + PLAN_REMINDER_MAX_DELAY):
+                    continue
+                key = {"item_key": item["key"], "for_date": item["day"], "days_before": days}
+                if db.query(PlanReminderSent).filter_by(**key).first():
+                    continue
+                body = " · ".join(p for p in (_nl_date(item["day"]), item["where"]) if p)
+                for sub in subs:
+                    _push(db, sub, {"title": f"{prefix}: {item['title']}", "body": body, "url": item["url"]})
+                subs = [s for s in subs if s not in db.deleted]
+                db.add(PlanReminderSent(**key))
+                db.commit()
+    except Exception as exc:
+        print(f"[EventView] _send_plan_reminders error: {exc}")
+        db.rollback()
+    finally:
+        db.close()
+
+
 _scheduler = BackgroundScheduler()
 _scheduler.add_job(_send_due_reminders, "interval", minutes=1)
+_scheduler.add_job(_send_plan_reminders, "interval", minutes=1)
 
 
 @asynccontextmanager
@@ -470,6 +550,43 @@ def get_vapid_key():
     return {"public_key": VAPID_PUBLIC_KEY}
 
 
+def _upsert_subscription(db, data: PushSubscriptionData) -> PushSubscription:
+    sub = db.query(PushSubscription).filter_by(endpoint=data.endpoint).first()
+    if sub:
+        sub.p256dh = data.p256dh
+        sub.auth = data.auth
+    else:
+        sub = PushSubscription(endpoint=data.endpoint, p256dh=data.p256dh, auth=data.auth)
+        db.add(sub)
+        db.flush()
+    return sub
+
+
+@app.post("/api/push/subscriptions")
+def register_push_subscription(body: PushSubscriptionData):
+    """Register a device; automatic reminders for planned items go to all of them."""
+    db = SessionLocal()
+    try:
+        _upsert_subscription(db, body)
+        db.commit()
+        return {"ok": True}
+    finally:
+        db.close()
+
+
+@app.post("/api/push/test")
+def send_test_push():
+    """Send a test notification to every registered device."""
+    db = SessionLocal()
+    try:
+        subs = db.query(PushSubscription).all()
+        sent = sum(_push(db, s, {"title": "EventView", "body": "Meldingen werken 🎉", "url": "/#/"}) for s in subs)
+        db.commit()
+        return {"devices": sent}
+    finally:
+        db.close()
+
+
 @app.get("/api/reminders", response_model=list[ReminderOut])
 def list_reminders():
     db = SessionLocal()
@@ -490,18 +607,7 @@ def create_reminder(body: ReminderIn):
         if not db.query(Event).filter(Event.id == body.event_id).first():
             raise HTTPException(status_code=404, detail="Event not found")
 
-        sub = db.query(PushSubscription).filter_by(endpoint=body.subscription.endpoint).first()
-        if sub:
-            sub.p256dh = body.subscription.p256dh
-            sub.auth = body.subscription.auth
-        else:
-            sub = PushSubscription(
-                endpoint=body.subscription.endpoint,
-                p256dh=body.subscription.p256dh,
-                auth=body.subscription.auth,
-            )
-            db.add(sub)
-            db.flush()
+        sub = _upsert_subscription(db, body.subscription)
 
         reminder = db.query(Reminder).filter_by(event_id=body.event_id).first()
         if reminder:

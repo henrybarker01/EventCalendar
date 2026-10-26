@@ -107,6 +107,20 @@ class Reminder(Base):
         return f"<Reminder event_id={self.event_id} at={self.remind_at}>"
 
 
+class PlanReminderSent(Base):
+    """Automatic reminders for planned items (starred events and own calendar
+    items) that have gone out, so each is sent once. No foreign key: items can
+    be unstarred or deleted, and old rows are pruned by date."""
+    __tablename__ = "plan_reminders_sent"
+    __table_args__ = (UniqueConstraint("item_key", "for_date", "days_before", name="uq_plan_reminder"),)
+
+    id = Column(Integer, primary_key=True)
+    item_key = Column(String(64), nullable=False)  # "event:<id>" or "custom:<id>"
+    for_date = Column(Date, nullable=False)
+    days_before = Column(Integer, nullable=False)
+    sent_at = Column(DateTime, default=datetime.utcnow)
+
+
 class ScrapingLog(Base):
     __tablename__ = "scraping_logs"
 

@@ -10,6 +10,10 @@ onMounted(() => {
   if (isSupported && Notification.permission === 'default') {
     showBanner.value = true
   }
+  // Already allowed: (re-)register this device so automatic reminders reach it.
+  if (isSupported && Notification.permission === 'granted') {
+    ensureSubscription()
+  }
 })
 
 async function enableNotifications() {

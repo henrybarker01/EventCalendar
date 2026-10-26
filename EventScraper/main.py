@@ -18,7 +18,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import func, select
 
 from config import KEEP_PAST_DAYS
-from models import Bookmark, Event, HiddenEvent, Reminder, ScrapingLog, SessionLocal, init_db
+from models import Bookmark, Event, HiddenEvent, PlanReminderSent, Reminder, ScrapingLog, SessionLocal, init_db
 from scrapers.barneveld_centrum import BarneveldCentrumScraper
 from scrapers.barneveldse_krant import BarneveldseKrantScraper
 from scrapers.veluwe_nl import VeluweNlScraper
@@ -73,6 +73,7 @@ def prune_old_rows() -> None:
         logs = db.query(ScrapingLog).filter(
             ScrapingLog.started_at < datetime.utcnow() - timedelta(days=KEEP_PAST_DAYS)
         ).delete(synchronize_session=False)
+        db.query(PlanReminderSent).filter(PlanReminderSent.for_date < cutoff).delete(synchronize_session=False)
         db.commit()
         print(f"\nPruned {len(old_ids)} events that ended before {cutoff} and {logs} scraping logs.")
     finally:

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onActivated, onMounted, watch } from 'vue'
-import type { Event } from '../api/client'
+import { api, type Event } from '../api/client'
+import { usePushNotifications } from '../composables/usePushNotifications'
 import { useEventsStore, DATE_PRESETS, type DatePreset } from '../stores/events'
 import { useBookmarksStore } from '../stores/bookmarks'
 import { useCustomEventsStore } from '../stores/customEvents'
@@ -72,6 +73,23 @@ const upcomingCustom = computed(() =>
 )
 
 const plannedCount = computed(() => bookedUpcoming.value.length + upcomingCustom.value.length)
+
+// Planned items get automatic reminders (sent by the API) on every device that allowed them.
+const { isSupported: pushSupported, permission, ensureSubscription } = usePushNotifications()
+const testResult = ref('')
+
+async function sendTestPush() {
+  testResult.value = 'Versturen...'
+  try {
+    await ensureSubscription()
+    const devices = await api.sendTestPush()
+    testResult.value = devices
+      ? `Verstuurd naar ${devices} ${devices === 1 ? 'apparaat' : 'apparaten'}`
+      : 'Geen apparaat bereikt'
+  } catch {
+    testResult.value = 'Versturen mislukt'
+  }
+}
 
 function formatDate(dateStr: string) {
   return new Date(dateStr + 'T00:00:00').toLocaleDateString('nl-NL', { day: 'numeric', month: 'long' })
@@ -165,6 +183,18 @@ watch([() => store.fromDate, () => store.toDate], ([from, to]) => {
     </template>
 
     <template v-else>
+      <p class="plan-reminder-note">
+        <template v-if="permission === 'granted'">
+          🔔 Je krijgt een melding 5 dagen en 1 dag van tevoren, om 19:00.
+          <button class="link-btn" @click="sendTestPush">Stuur testmelding</button>
+          <span v-if="testResult"> · {{ testResult }}</span>
+        </template>
+        <template v-else-if="pushSupported && permission === 'default'">
+          🔔 Zet meldingen aan voor een herinnering 5 dagen en 1 dag van tevoren.
+          <button class="link-btn" @click="ensureSubscription">Meldingen aanzetten</button>
+        </template>
+        <template v-else>🔕 Meldingen staan uit in deze browser, dus herinneringen komen hier niet aan.</template>
+      </p>
       <p v-if="plannedCount === 0" class="status-msg">Nog niets gepland. Klik op ★ bij een evenement om het toe te voegen.</p>
       <template v-else>
         <div class="event-grid">

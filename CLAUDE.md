@@ -56,6 +56,7 @@ EventView/
 - **One app container, fronted by a shared Caddy** — the `api` container runs `uvicorn api:app` (single worker — see below) serving both the REST API and the built Vue SPA from `EventView.UI/dist/`. EventView has no Caddy of its own: the Lightsail box already runs `aeromechui-caddy-1` (from `~/AeroMechUI`), which owns ports 80/443 for all sites. `api` joins that project's external `aeromechui_default` network under the alias `eventview-api`, and the `calendar.aeromech.co` block lives in `/home/ubuntu/AeroMechUI/Caddyfile` (`reverse_proxy eventview-api:8000`).
 - **Separate `scraper` container** runs `main.py --schedule` (the same daily loop used everywhere), sharing the SQLite file with `api` via the `./data` bind mount. This replaces the old Pi cron job.
 - **Single uvicorn worker only** — the reminder scheduler (APScheduler `BackgroundScheduler`, polling every minute inside `api.py`) runs in-process. Multiple workers would each run their own scheduler and send duplicate push notifications.
+- **Reminders** come in two kinds, both sent by that scheduler. Manual 🔔 reminders go to one device at a chosen time (`Reminder` table). Automatic reminders cover everything planned (starred events, including attractions on their chosen day, and own calendar items). They go to every registered device at 19:00 Amsterdam time, 5 days and 1 day before (`PLAN_REMINDERS` in `api.py`). Only times after the item was planned count, anything over 3 h late is skipped, and `plan_reminders_sent` makes each one go out once. Devices register via `POST /api/push/subscriptions` whenever notifications are allowed (app start, starring, adding an item), and subscriptions the push service reports gone (404/410) are deleted.
 - **Themes and distance are derived, not stored** — `enrich.py` maps each source's tags plus title keywords onto a fixed set of themes, and the location's town onto `TOWNS` (centroids from PDOK Locatieserver) for a distance from Barneveld. `/api/events` returns them as `themes`, `town`, `municipality`, `distance_km`, so changing the rules updates old events without re-scraping. Events in a town missing from `TOWNS` have no distance and drop out when a distance filter is on.
 - **Hash routing** in Vue (`createWebHashHistory`) so FastAPI's catch-all route serves `index.html` for all `/#/...` paths without conflicts.
 - **List views are kept alive** — `App.vue` wraps the router view in `<KeepAlive>` for `EventsView` and `CalendarView` (matched by file name), and the router restores the saved scroll position on back/forward. Opening an event and going back returns to the same tab, month and scroll position. The views refresh data older than 10 minutes when shown again (`refreshIfStale`), keeping the list on screen meanwhile. A new list-style view needs adding to that `include` list.
@@ -70,6 +71,8 @@ EventView/
 | GET | `/api/logs` | Recent scraping run history |
 | GET | `/api/image-proxy?url=...` | Proxy a remote image (hotlink bypass) |
 | POST | `/api/scrape/{source_name}` | Manually trigger a scraper run |
+| POST | `/api/push/subscriptions` | Register a device for push (`endpoint`, `p256dh`, `auth`) |
+| POST | `/api/push/test` | Send a test notification to every registered device |
 
 ## EventScraper — commands
 

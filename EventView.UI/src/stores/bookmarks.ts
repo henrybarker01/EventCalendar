@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { reactive } from 'vue'
 import { api, type Event } from '../api/client'
+import { usePushNotifications } from '../composables/usePushNotifications'
 
 export const useBookmarksStore = defineStore('bookmarks', () => {
   const bookmarkedIds = reactive(new Set<number>())
@@ -41,6 +42,9 @@ export const useBookmarksStore = defineStore('bookmarks', () => {
       chosenDates.delete(id)
       await api.removeBookmark(id)
     } else {
+      // Planned items get automatic reminders: ask for notification permission
+      // (only the first time) while we're still inside the click.
+      void usePushNotifications().ensureSubscription()
       bookmarkedIds.add(id)
       if (chosenDate) chosenDates.set(id, chosenDate)
       await api.addBookmark(id, chosenDate)

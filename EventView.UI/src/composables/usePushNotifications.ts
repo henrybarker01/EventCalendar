@@ -48,7 +48,10 @@ export function usePushNotifications() {
     }
 
     const json = sub.toJSON() as { endpoint: string; keys: { p256dh: string; auth: string } }
-    return { endpoint: json.endpoint, p256dh: json.keys.p256dh, auth: json.keys.auth }
+    const data = { endpoint: json.endpoint, p256dh: json.keys.p256dh, auth: json.keys.auth }
+    // Automatic reminders for planned items go to every registered device.
+    await api.registerPushSubscription(data).catch(() => {})
+    return data
   }
 
   return { isSupported, permission, ensureSubscription }

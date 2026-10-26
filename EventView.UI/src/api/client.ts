@@ -112,6 +112,14 @@ export const api = {
     return http.get<{ public_key: string }>('/push/vapid-key').then(r => r.data.public_key)
   },
 
+  registerPushSubscription(subscription: { endpoint: string; p256dh: string; auth: string }) {
+    return http.post('/push/subscriptions', subscription).then(r => r.data)
+  },
+
+  sendTestPush() {
+    return http.post<{ devices: number }>('/push/test').then(r => r.data.devices)
+  },
+
   getReminders() {
     return http.get<Reminder[]>('/reminders').then(r => r.data)
   },
