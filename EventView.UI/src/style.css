@@ -218,6 +218,8 @@ a { color: inherit; text-decoration: none; }
 .event-card-title { font-size: 1rem; font-weight: 600; line-height: 1.3; }
 .event-card-date { font-size: .85rem; color: var(--c-primary); font-weight: 500; }
 .event-card-location { font-size: .82rem; color: var(--c-muted); }
+/* A starred event its source no longer lists */
+.event-gone { font-size: .82rem; font-weight: 600; color: #dc2626; }
 .event-card-desc {
   font-size: .85rem; color: var(--c-muted); margin-top: auto; padding-top: .4rem;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;

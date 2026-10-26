@@ -248,7 +248,9 @@ def list_events(
     try:
         q = db.query(Event)
         if active_only:
-            q = q.filter(Event.is_active == True)
+            # Starred events stay listed after their source drops them, so the
+            # card can say so instead of the plan silently disappearing.
+            q = q.filter(or_(Event.is_active == True, Event.bookmarks.any()))
         if source:
             q = q.filter(Event.source_name == source)
         if event_type:

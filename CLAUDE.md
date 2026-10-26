@@ -51,6 +51,7 @@ EventView/
 
 - **SQLite** via SQLAlchemy — zero server, single file (`events.db`). Path is `$EVENTVIEW_DATA_DIR/events.db`, defaulting to `EventScraper/` when unset; Docker sets it to `/data`, a bind-mounted host directory, so data survives container rebuilds.
 - **Deduplication** by `(source_url, event_date)` — safe to run scrapers repeatedly.
+- **Retiring and pruning** — after a successful run, a source's not-yet-started events that it no longer lists are set `is_active=False` (cancelled, removed or moved); one that is listed again is reactivated. A run that lists under 30% of what we hold for the source is treated as broken and retires nothing. After every `--all` run, events that ended more than `KEEP_PAST_DAYS` (90) ago are deleted with their hidden/reminder rows, plus old scraping logs. Starred events are never deleted, and `/api/events` keeps returning them when inactive so the card can warn they may be cancelled.
 - **Image proxy** at `GET /api/image-proxy?url=...` — source sites block hotlinking, so images are fetched server-side by FastAPI and streamed to the browser. Vue components always use `/api/image-proxy?url=...` instead of direct image URLs.
 - **One app container, fronted by a shared Caddy** — the `api` container runs `uvicorn api:app` (single worker — see below) serving both the REST API and the built Vue SPA from `EventView.UI/dist/`. EventView has no Caddy of its own: the Lightsail box already runs `aeromechui-caddy-1` (from `~/AeroMechUI`), which owns ports 80/443 for all sites. `api` joins that project's external `aeromechui_default` network under the alias `eventview-api`, and the `calendar.aeromech.co` block lives in `/home/ubuntu/AeroMechUI/Caddyfile` (`reverse_proxy eventview-api:8000`).
 - **Separate `scraper` container** runs `main.py --schedule` (the same daily loop used everywhere), sharing the SQLite file with `api` via the `./data` bind mount. This replaces the old Pi cron job.
@@ -62,7 +63,7 @@ EventView/
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/events` | List events. Query params: `source`, `from_date` (also matches events still running, i.e. `end_date >= from_date`), `to_date`, `active_only`, `limit`, `offset`. The UI always sends `from_date` (today, or the calendar's first visible day) so past rows can't fill the limit |
+| GET | `/api/events` | List events. Query params: `source`, `from_date` (also matches events still running, i.e. `end_date >= from_date`), `to_date`, `active_only` (starred events are included even when inactive), `limit`, `offset`. The UI always sends `from_date` (today, or the calendar's first visible day) so past rows can't fill the limit |
 | GET | `/api/events/{id}` | Single event |
 | GET | `/api/sources` | List of registered source names |
 | GET | `/api/logs` | Recent scraping run history |
@@ -87,6 +88,7 @@ python main.py --init-db     # Create tables (safe to re-run)
 python main.py --scraper barneveld   # Run one scraper by name
 python main.py --all                 # Run all registered scrapers
 python main.py --schedule            # Run all scrapers every 24 h (blocking)
+python main.py --prune               # Delete old rows now (also runs after every --all)
 
 # API server
 python api.py                # Starts on http://0.0.0.0:8000
@@ -169,5 +171,7 @@ Reference implementation: [`EventScraper/scrapers/barneveld_centrum.py`](EventSc
 If the source covers a wider region than Barneveld, keep only nearby events with `is_nearby(lat, lng)` from `base_scraper.py` (radius `MAX_DISTANCE_KM` in `config.py`) — see `veluwe_nl.py` and `wattedoenin_nl.py`.
 
 Rows are deduplicated on `(source_url, event_date)`, so never use a date that moves from day to day (such as a "next date" that rolls forward); emit one row per real date instead.
+
+Upcoming events a run doesn't return are retired, so `parse_events()` must either return everything the source lists or raise. If it deliberately stops early (e.g. only N days ahead, like `barneveldse_krant.py`), set `self.covered_until` to the last date it saw in full; later events then aren't treated as removed.
 
 If a new site blocks hotlinking, add its hostname to the `allowed_hosts` list in the `image_proxy` endpoint in `api.py`.

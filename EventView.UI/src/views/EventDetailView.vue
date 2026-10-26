@@ -67,6 +67,7 @@ function proxyUrl(url: string) {
       </div>
 
       <h2>{{ event.title }}</h2>
+      <p v-if="!event.is_active" class="event-gone" style="margin-bottom:.75rem">⚠️ Niet meer in de agenda van de bron: mogelijk afgelast of verplaatst</p>
 
       <div class="event-detail-meta">
         <span v-if="event.event_date">🗓️ {{ formatDate(event.event_date) }}<template v-if="event.end_date && event.end_date !== event.event_date"> t/m {{ formatDate(event.end_date) }}</template></span>

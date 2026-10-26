@@ -17,6 +17,10 @@ MAX_WORKERS = 2       # tuned for Raspberry Pi 4B
 HOME_LAT, HOME_LNG = 52.1403, 5.5832
 MAX_DISTANCE_KM = 25
 
+# After each scrape run, events that ended longer ago than this are deleted
+# (starred ones are kept), along with scraping logs of the same age.
+KEEP_PAST_DAYS = 90
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (compatible; EventViewBot/1.0; "

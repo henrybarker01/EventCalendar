@@ -6,14 +6,19 @@ Usage:
     python main.py --scraper barneveld
     python main.py --all
     python main.py --schedule          # Run all scrapers on a daily cron via APScheduler
+    python main.py --prune             # Delete old rows now (also runs after every --all)
 """
 
 import argparse
 import logging
 import sys
 import time
+from datetime import date, datetime, timedelta
 
-from models import init_db
+from sqlalchemy import func, select
+
+from config import KEEP_PAST_DAYS
+from models import Bookmark, Event, HiddenEvent, Reminder, ScrapingLog, SessionLocal, init_db
 from scrapers.barneveld_centrum import BarneveldCentrumScraper
 from scrapers.barneveldse_krant import BarneveldseKrantScraper
 from scrapers.veluwe_nl import VeluweNlScraper
@@ -43,7 +48,35 @@ def run_all() -> None:
     for name in SCRAPERS:
         print(f"\n── {name} ──")
         result = run_scraper(name)
-        print(f"   found={result['found']}  new={result['new']}  errors={result['errors']}")
+        print(f"   found={result['found']}  new={result['new']}  retired={result['retired']}  errors={result['errors']}")
+    prune_old_rows()
+
+
+def prune_old_rows() -> None:
+    """Delete events that ended more than KEEP_PAST_DAYS ago, with their
+    hidden/reminder rows, and scraping logs of that age. Starred events are
+    kept: they're the record of what you planned."""
+    cutoff = date.today() - timedelta(days=KEEP_PAST_DAYS)
+    db = SessionLocal()
+    try:
+        old_ids = [i for (i,) in db.query(Event.id).filter(
+            Event.event_date.isnot(None),
+            func.coalesce(Event.end_date, Event.event_date) < cutoff,
+            Event.id.notin_(select(Bookmark.event_id)),
+        )]
+        # Bulk deletes skip the ORM cascades, so remove dependent rows first.
+        for start in range(0, len(old_ids), 500):
+            chunk = old_ids[start:start + 500]
+            for model in (HiddenEvent, Reminder):
+                db.query(model).filter(model.event_id.in_(chunk)).delete(synchronize_session=False)
+            db.query(Event).filter(Event.id.in_(chunk)).delete(synchronize_session=False)
+        logs = db.query(ScrapingLog).filter(
+            ScrapingLog.started_at < datetime.utcnow() - timedelta(days=KEEP_PAST_DAYS)
+        ).delete(synchronize_session=False)
+        db.commit()
+        print(f"\nPruned {len(old_ids)} events that ended before {cutoff} and {logs} scraping logs.")
+    finally:
+        db.close()
 
 
 def start_scheduler(interval_hours: float = 24.0) -> None:
@@ -72,6 +105,11 @@ def main():
     group.add_argument("--scraper", metavar="NAME", help="Run a single scraper by name")
     group.add_argument("--all", action="store_true", help="Run all registered scrapers once")
     group.add_argument(
+        "--prune",
+        action="store_true",
+        help=f"Delete events that ended over {KEEP_PAST_DAYS} days ago (keeps starred ones)",
+    )
+    group.add_argument(
         "--schedule",
         nargs="?",
         const=24.0,
@@ -86,9 +124,11 @@ def main():
         init_db()
     elif args.scraper:
         result = run_scraper(args.scraper)
-        print(f"found={result['found']}  new={result['new']}  errors={result['errors']}")
+        print(f"found={result['found']}  new={result['new']}  retired={result['retired']}  errors={result['errors']}")
     elif args.all:
         run_all()
+    elif args.prune:
+        prune_old_rows()
     elif args.schedule is not None:
         start_scheduler(interval_hours=args.schedule)
 

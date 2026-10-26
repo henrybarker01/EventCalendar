@@ -118,6 +118,7 @@ function proxyUrl(url: string) {
       </div>
       <p class="event-card-title">{{ event.title }}</p>
       <p v-if="dateLabel" class="event-card-date">{{ dateLabel }}</p>
+      <p v-if="!event.is_active" class="event-gone">⚠️ Niet meer in de agenda van de bron: mogelijk afgelast of verplaatst</p>
       <p v-if="event.location" class="event-card-location">📍 {{ event.location }}<template v-if="distanceLabel"> · {{ distanceLabel }}</template></p>
       <p v-if="event.description" class="event-card-desc">{{ event.description }}</p>
     </div>

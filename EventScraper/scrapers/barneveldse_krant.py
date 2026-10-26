@@ -85,6 +85,7 @@ class BarneveldseKrantScraper(BaseScraper):
         horizon = today + timedelta(days=WINDOW_DAYS)
 
         rows = []
+        self.covered_until = horizon
         for page in range(1, MAX_PAGES + 1):
             soup = self.fetch_page(f"{self.base_url}?page={page}")
             links = soup.select('div.component__calendar-row a[href^="/agenda/"]')
@@ -96,6 +97,11 @@ class BarneveldseKrantScraper(BaseScraper):
             rows.extend(r for r in page_rows if today <= r["event_date"] <= horizon)
             if page_rows and page_rows[-1]["event_date"] > horizon:
                 break
+        else:
+            # Out of pages before the horizon: the last day seen may continue
+            # on the next page, so only the days before it were seen in full.
+            if rows:
+                self.covered_until = rows[-1]["event_date"] - timedelta(days=1)
 
         dates_by_id: dict[str, list[date]] = defaultdict(list)
         for r in rows:

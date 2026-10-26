@@ -2,10 +2,11 @@ import math
 import time
 import logging
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import date, datetime
 
 import requests
 from bs4 import BeautifulSoup
+from sqlalchemy import or_
 
 from config import HEADERS, REQUEST_TIMEOUT, REQUEST_DELAY, HOME_LAT, HOME_LNG, MAX_DISTANCE_KM
 from models import Event, ScrapingLog, SessionLocal
@@ -16,6 +17,11 @@ logging.basicConfig(
 )
 
 EARTH_RADIUS_KM = 6371.0
+
+# A run that lists fewer than this share of the upcoming events we hold for its
+# source looks broken (site redesign, blocked request) rather than like a wave
+# of cancellations, so nothing is retired after it.
+MIN_LISTED_SHARE = 0.3
 
 
 def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -41,6 +47,10 @@ class BaseScraper(ABC):
         self.logger = logging.getLogger(self.source_name or self.__class__.__name__)
         self.session = requests.Session()
         self.session.headers.update(HEADERS)
+        # parse_events() sets this when it doesn't read the whole listing (e.g.
+        # only N days ahead): the last date it fully saw. Events after it aren't
+        # treated as removed. None = it read everything the source lists.
+        self.covered_until: date | None = None
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -52,14 +62,16 @@ class BaseScraper(ABC):
         db.add(log)
         db.commit()
 
-        result = {"found": 0, "new": 0, "errors": 0}
+        result = {"found": 0, "new": 0, "retired": 0, "errors": 0}
         try:
             events = self.parse_events()
             result["found"] = len(events)
             result["new"] = self._save_events(db, events)
+            result["retired"] = self._retire_unlisted(db, events)
             log.status = "success"
             self.logger.info(
-                "Done — %d found, %d new.", result["found"], result["new"]
+                "Done — %d found, %d new, %d no longer listed.",
+                result["found"], result["new"], result["retired"],
             )
         except Exception as exc:
             log.status = "error"
@@ -117,6 +129,8 @@ class BaseScraper(ABC):
                 .first()
             )
             if exists:
+                if not exists.is_active:
+                    exists.is_active = True  # listed again after being retired
                 continue
 
             event = Event(
@@ -138,3 +152,35 @@ class BaseScraper(ABC):
 
         db.commit()
         return new_count
+
+    def _retire_unlisted(self, db, events: list[dict]) -> int:
+        """Mark this source's events that it no longer lists as inactive
+        (cancelled, removed, or moved to another date). Only events that
+        haven't started yet count: some sources stop listing a multi-day event
+        after its first day. One that comes back is reactivated by _save_events.
+        """
+        today = date.today()
+        q = db.query(Event).filter(
+            Event.source_name == self.source_name,
+            Event.is_active == True,
+            or_(Event.event_date.is_(None), Event.event_date >= today),
+        )
+        if self.covered_until is not None:
+            q = q.filter(or_(Event.event_date.is_(None), Event.event_date <= self.covered_until))
+        held = q.all()
+
+        listed = {(e["source_url"], e.get("event_date"), e.get("event_type", "event")) for e in events}
+        gone = [e for e in held if (e.source_url, e.event_date, e.event_type) not in listed]
+        if not gone:
+            return 0
+        if len(events) < MIN_LISTED_SHARE * len(held):
+            self.logger.warning(
+                "Only %d events listed against %d held; looks like a broken scrape, retiring none.",
+                len(events), len(held),
+            )
+            return 0
+
+        for e in gone:
+            e.is_active = False
+        db.commit()
+        return len(gone)
