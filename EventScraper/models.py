@@ -121,6 +121,17 @@ class PlanReminderSent(Base):
     sent_at = Column(DateTime, default=datetime.utcnow)
 
 
+class NewEventsDigest(Base):
+    """A daily "new events" notification and the events it announced; the page
+    behind the notification lists exactly these. The latest one's sent_at is
+    where the next digest starts counting."""
+    __tablename__ = "new_events_digests"
+
+    id = Column(Integer, primary_key=True)
+    sent_at = Column(DateTime, nullable=False)
+    event_ids = Column(Text, nullable=False)  # JSON list of Event ids
+
+
 class ScrapingLog(Base):
     __tablename__ = "scraping_logs"
 

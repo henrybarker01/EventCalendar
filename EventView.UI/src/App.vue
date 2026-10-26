@@ -49,6 +49,7 @@ async function enableNotifications() {
     <nav>
       <RouterLink to="/">Agenda</RouterLink>
       <RouterLink to="/kalender">Kalender</RouterLink>
+      <RouterLink to="/nieuw">Nieuw</RouterLink>
     </nav>
   </header>
 
@@ -62,7 +63,7 @@ async function enableNotifications() {
     <!-- The list views stay alive while an event is open, so going back
          returns to the same tab, month and scroll position. -->
     <RouterView v-slot="{ Component }">
-      <KeepAlive :include="['EventsView', 'CalendarView']">
+      <KeepAlive :include="['EventsView', 'CalendarView', 'NewEventsView']">
         <component :is="Component" />
       </KeepAlive>
     </RouterView>

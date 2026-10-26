@@ -185,7 +185,8 @@ watch([() => store.fromDate, () => store.toDate], ([from, to]) => {
     <template v-else>
       <p class="plan-reminder-note">
         <template v-if="permission === 'granted'">
-          🔔 Je krijgt een melding 5 dagen en 1 dag van tevoren, om 19:00.
+          🔔 Je krijgt een melding 5 dagen en 1 dag van tevoren, om 19:00, en om 18:00 als er
+          <RouterLink to="/nieuw">nieuwe evenementen</RouterLink> zijn.
           <button class="link-btn" @click="sendTestPush">Stuur testmelding</button>
           <span v-if="testResult"> · {{ testResult }}</span>
         </template>

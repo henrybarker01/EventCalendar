@@ -8,6 +8,7 @@ FastAPI server — serves the REST API and (optionally) the Vue frontend.
 
 import json
 import os
+import re
 from contextlib import asynccontextmanager
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -27,7 +28,7 @@ from config import DATA_DIR
 from enrich import place_for, themes_for
 from models import (
     Event, Bookmark, CustomEvent, HiddenEvent, ScrapingLog,
-    PushSubscription, Reminder, PlanReminderSent,
+    PushSubscription, Reminder, PlanReminderSent, NewEventsDigest,
     SessionLocal, init_db,
 )
 
@@ -210,9 +211,63 @@ def _send_plan_reminders(now: datetime | None = None):
         db.close()
 
 
+def _norm_title(title: str) -> str:
+    return re.sub(r"\W+", " ", title.lower()).strip()
+
+
+def _new_events_since(db, since: datetime) -> list[Event]:
+    """Upcoming events added since `since` whose title their source hadn't
+    listed before, soonest first. New rows that are just another date of a
+    known event (veluwe lists long-running ones date by date, the krant its
+    monthly items) don't count."""
+    today = datetime.now(LOCAL_TZ).date()
+    rows = db.query(Event).filter(Event.event_type == "event").all()
+    known = {(e.source_name, _norm_title(e.title)) for e in rows if e.created_at < since}
+    new = {}
+    for e in sorted(rows, key=lambda e: (e.event_date or date.max, e.id)):
+        if e.created_at < since or not e.is_active or not e.event_date or (e.end_date or e.event_date) < today:
+            continue
+        new.setdefault((e.source_name, _norm_title(e.title)), e)
+    return [e for key, e in new.items() if key not in known]
+
+
+def _send_new_events_digest(now: datetime | None = None):
+    """Daily at 18:00: one notification about the events added since the
+    previous digest, linking to a page that lists them. Skipped when there's
+    nothing new; if no device gets it, the next digest covers these too."""
+    now = now or datetime.utcnow()
+    db = SessionLocal()
+    try:
+        last = db.query(NewEventsDigest).order_by(NewEventsDigest.sent_at.desc()).first()
+        new = _new_events_since(db, last.sent_at if last else now - timedelta(days=1))
+        subs = db.query(PushSubscription).all()
+        if not new or not subs:
+            return
+        digest = NewEventsDigest(sent_at=now, event_ids=json.dumps([e.id for e in new]))
+        db.add(digest)
+        db.flush()
+        n = len(new)
+        delivered, _ = _push_all(db, subs, {
+            "title": f"{n} nieuwe evenementen" if n > 1 else "1 nieuw evenement",
+            "body": ", ".join(e.title for e in new[:3]) + (f" en {n - 3} meer" if n > 3 else ""),
+            "url": f"/#/nieuw/{digest.id}",
+        })
+        if not delivered:
+            db.delete(digest)  # keep the window open for the next digest
+        db.commit()
+    except Exception as exc:
+        print(f"[EventView] _send_new_events_digest error: {exc}")
+        db.rollback()
+    finally:
+        db.close()
+
+
 _scheduler = BackgroundScheduler()
 _scheduler.add_job(_send_due_reminders, "interval", minutes=1)
 _scheduler.add_job(_send_plan_reminders, "interval", minutes=1)
+# Survives a restart around 18:00 (misfire grace) without sending twice (coalesce).
+_scheduler.add_job(_send_new_events_digest, "cron", hour=18, minute=0, timezone="Europe/Amsterdam",
+                   misfire_grace_time=3600, coalesce=True)
 
 
 @asynccontextmanager
@@ -391,6 +446,56 @@ def get_event(event_id: int):
         if db.query(HiddenEvent).filter_by(event_id=event_id).first():
             out.is_hidden = True
         return out
+    finally:
+        db.close()
+
+
+class DigestOut(BaseModel):
+    id: int
+    sent_at: datetime
+    events: list[EventOut]
+
+
+def _digest_out(db, d: NewEventsDigest) -> DigestOut:
+    """The digest's events that still exist (old rows get pruned), with the
+    same starred/hidden flags as /api/events."""
+    ids = json.loads(d.event_ids)
+    by_id = {e.id: e for e in db.query(Event).filter(Event.id.in_(ids))}
+    bookmarks = {b.event_id: b for b in db.query(Bookmark).filter(Bookmark.event_id.in_(ids))}
+    hidden = {h.event_id for h in db.query(HiddenEvent).filter(HiddenEvent.event_id.in_(ids))}
+    events = []
+    for i in ids:
+        if i not in by_id:
+            continue
+        out = _event_out(by_id[i])
+        if i in bookmarks:
+            out.is_bookmarked = True
+            out.bookmark_date = bookmarks[i].chosen_date
+        out.is_hidden = i in hidden
+        events.append(out)
+    return DigestOut(id=d.id, sent_at=d.sent_at.replace(tzinfo=timezone.utc), events=events)
+
+
+@app.get("/api/digests/latest", response_model=DigestOut)
+def latest_digest():
+    db = SessionLocal()
+    try:
+        d = db.query(NewEventsDigest).order_by(NewEventsDigest.sent_at.desc()).first()
+        if not d:
+            raise HTTPException(status_code=404, detail="No new-events digest yet")
+        return _digest_out(db, d)
+    finally:
+        db.close()
+
+
+@app.get("/api/digests/{digest_id}", response_model=DigestOut)
+def get_digest(digest_id: int):
+    db = SessionLocal()
+    try:
+        d = db.get(NewEventsDigest, digest_id)
+        if not d:
+            raise HTTPException(status_code=404, detail="Digest not found")
+        return _digest_out(db, d)
     finally:
         db.close()
 

@@ -26,6 +26,13 @@ export interface Event {
   distance_km: number | null
 }
 
+// A daily "new events" notification and the events it announced
+export interface Digest {
+  id: number
+  sent_at: string
+  events: Event[]
+}
+
 export interface CustomEvent {
   id: number
   title: string
@@ -65,6 +72,10 @@ export const api = {
 
   getEvent(id: number) {
     return http.get<Event>(`/events/${id}`).then(r => r.data)
+  },
+
+  getDigest(id?: number) {
+    return http.get<Digest>(id ? `/digests/${id}` : '/digests/latest').then(r => r.data)
   },
 
   getSources() {
